@@ -11,6 +11,7 @@ export const licenses = pgTable("licenses", {
   productId: text("product_id")
     .references(() => applications.id)
     .notNull(),
+  tier: text("tier", { enum: ["basic", "max"] }),
   expirationDate: timestamp("expiration_date"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

@@ -15,6 +15,10 @@ export const swaggerSpec = {
   },
   servers: [
     {
+      url: "https://cereal.aidan.so",
+      description: "Production server",
+    },
+    {
       url: "http://localhost:3000",
       description: "Development server",
     },
@@ -506,6 +510,12 @@ export const swaggerSpec = {
                     minLength: 1,
                     example: "myapp",
                   },
+                  tier: {
+                    type: "string",
+                    enum: ["basic", "max"],
+                    description: "Optional license tier",
+                    example: "max",
+                  },
                   expirationDate: {
                     type: "string",
                     format: "date-time",
@@ -525,6 +535,13 @@ export const swaggerSpec = {
                 "With expiration": {
                   value: {
                     productId: "myapp",
+                    expirationDate: "2025-12-31",
+                  },
+                },
+                "With tier": {
+                  value: {
+                    productId: "myapp",
+                    tier: "max",
                     expirationDate: "2025-12-31",
                   },
                 },
@@ -611,7 +628,7 @@ export const swaggerSpec = {
       post: {
         summary: "Update an existing license",
         description:
-          "Modify a license key's product association or expiration date",
+          "Modify a license key's product association, tier, or expiration date",
         operationId: "editLicense",
         tags: ["Licenses"],
         security: [{ bearerAuth: [] }],
@@ -633,6 +650,12 @@ export const swaggerSpec = {
                     description:
                       "New product identifier (optional - updates product association)",
                     example: "myapp",
+                  },
+                  tier: {
+                    type: "string",
+                    enum: ["basic", "max"],
+                    description: "New tier (optional - updates license tier)",
+                    example: "max",
                   },
                   expirationDate: {
                     type: "string",
@@ -657,10 +680,17 @@ export const swaggerSpec = {
                     expirationDate: "2026-06-30",
                   },
                 },
-                "Update both": {
+                "Update tier": {
+                  value: {
+                    key: "550e8400-e29b-41d4-a716-446655440000",
+                    tier: "basic",
+                  },
+                },
+                "Update all": {
                   value: {
                     key: "550e8400-e29b-41d4-a716-446655440000",
                     productId: "newapp",
+                    tier: "max",
                     expirationDate: "2026-06-30",
                   },
                 },
@@ -933,6 +963,131 @@ export const swaggerSpec = {
         },
       },
     },
+    "/licenses/validate": {
+      post: {
+        summary: "Validate a license key",
+        description:
+          "Validates a license key and returns license information. This endpoint does not require authentication.",
+        operationId: "validateLicense",
+        tags: ["Licenses"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["key"],
+                properties: {
+                  key: {
+                    type: "string",
+                    format: "uuid",
+                    description: "License key to validate",
+                    example: "550e8400-e29b-41d4-a716-446655440000",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Validation result",
+            content: {
+              "application/json": {
+                schema: {
+                  oneOf: [
+                    {
+                      type: "object",
+                      description: "Valid license",
+                      properties: {
+                        valid: {
+                          type: "boolean",
+                          example: true,
+                        },
+                        productId: {
+                          type: "string",
+                          example: "am-max",
+                        },
+                        tier: {
+                          type: "string",
+                          enum: ["basic", "max"],
+                          nullable: true,
+                          example: "max",
+                        },
+                        expirationDate: {
+                          type: "string",
+                          format: "date-time",
+                          nullable: true,
+                          example: "2026-12-31T23:59:59Z",
+                        },
+                        createdAt: {
+                          type: "string",
+                          format: "date-time",
+                          example: "2025-02-10T12:00:00Z",
+                        },
+                      },
+                    },
+                    {
+                      type: "object",
+                      description: "Invalid license",
+                      properties: {
+                        valid: {
+                          type: "boolean",
+                          example: false,
+                        },
+                        reason: {
+                          type: "string",
+                          example: "License key not found",
+                        },
+                        expirationDate: {
+                          type: "string",
+                          format: "date-time",
+                          nullable: true,
+                          description: "Only included for expired licenses",
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Bad request (missing key)",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  example: "Missing key",
+                },
+              },
+            },
+          },
+          "405": {
+            description: "Method not allowed - Only POST is supported",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  example: "Method Not Allowed",
+                },
+              },
+            },
+          },
+          "500": {
+            description: "Internal server error",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  example: "Internal Server Error",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     "/swagger": {
       get: {
         summary: "Swagger UI documentation",
@@ -1020,6 +1175,13 @@ export const swaggerSpec = {
             type: "string",
             description: "Associated product identifier",
             example: "myapp",
+          },
+          tier: {
+            type: "string",
+            enum: ["basic", "max"],
+            nullable: true,
+            description: "License tier (optional)",
+            example: "max",
           },
           expirationDate: {
             type: "string",
