@@ -1,0 +1,9 @@
+node_modules/
+.next/
+db-data/
+.env*
+bun.lock*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
