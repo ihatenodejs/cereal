@@ -7,6 +7,7 @@ import { authenticate } from "../middleware/auth.ts";
 interface ProductRequestBody {
   id?: string;
   name?: string;
+  availableTiers?: string[];
 }
 
 export async function handleProductsRequest(req: Request): Promise<Response> {
@@ -42,27 +43,82 @@ export async function handleProductsRequest(req: Request): Promise<Response> {
     const body = (await req.json()) as ProductRequestBody;
 
     if (url.pathname === "/products/add") {
-      const { id, name } = body;
+      const { id, name, availableTiers } = body;
       if (!id || !name) {
         return new Response("Missing id or name", { status: 400 });
       }
 
-      await db.insert(applications).values({ id, name });
+      if (availableTiers !== undefined) {
+        if (!Array.isArray(availableTiers)) {
+          return new Response("availableTiers must be an array", {
+            status: 400,
+          });
+        }
+
+        if (availableTiers.some((tier) => !tier || tier.trim() === "")) {
+          return new Response("availableTiers cannot contain empty strings", {
+            status: 400,
+          });
+        }
+
+        const uniqueTiers = new Set(availableTiers);
+        if (uniqueTiers.size !== availableTiers.length) {
+          return new Response("availableTiers cannot contain duplicates", {
+            status: 400,
+          });
+        }
+      }
+
+      await db.insert(applications).values({
+        id,
+        name,
+        availableTiers: availableTiers || null,
+      });
       return new Response(JSON.stringify({ success: true, id, name }), {
         headers: { "Content-Type": "application/json" },
       });
     }
 
     if (url.pathname === "/products/edit") {
-      const { id, name } = body;
+      const { id, name, availableTiers } = body;
       if (!id) {
         return new Response("Missing id", { status: 400 });
       }
 
-      if (name) {
+      if (availableTiers !== undefined) {
+        if (!Array.isArray(availableTiers)) {
+          return new Response("availableTiers must be an array", {
+            status: 400,
+          });
+        }
+
+        if (availableTiers.some((tier) => !tier || tier.trim() === "")) {
+          return new Response("availableTiers cannot contain empty strings", {
+            status: 400,
+          });
+        }
+
+        const uniqueTiers = new Set(availableTiers);
+        if (uniqueTiers.size !== availableTiers.length) {
+          return new Response("availableTiers cannot contain duplicates", {
+            status: 400,
+          });
+        }
+      }
+
+      const updateData: { name?: string; availableTiers?: string[] | null } =
+        {};
+      if (name !== undefined) updateData.name = name;
+      if (availableTiers !== undefined) {
+        updateData.availableTiers = availableTiers.length
+          ? availableTiers
+          : null;
+      }
+
+      if (Object.keys(updateData).length > 0) {
         await db
           .update(applications)
-          .set({ name })
+          .set(updateData)
           .where(eq(applications.id, id));
       }
 

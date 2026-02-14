@@ -9,7 +9,7 @@ export const mockDelete = mock(() => ({ where: () => Promise.resolve() }));
 export const mockSelect = mock(() => ({
   from: () => ({
     limit: () => ({
-      offset: () => Promise.resolve([] as any[]),
+      offset: () => Promise.resolve([] as unknown[]),
     }),
   }),
 }));

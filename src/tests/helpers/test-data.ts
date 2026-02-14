@@ -1,8 +1,13 @@
 export const createMockProduct = (
-  overrides: Partial<{ id: string; name: string }> = {},
+  overrides: Partial<{
+    id: string;
+    name: string;
+    availableTiers?: string[];
+  }> = {},
 ) => ({
   id: overrides.id || "prod_default",
   name: overrides.name || "Default Product",
+  ...(overrides.availableTiers && { availableTiers: overrides.availableTiers }),
 });
 
 export const createMockLicense = (

@@ -21,6 +21,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .env.test.local
 .env.production.local
 .env.local
+!examples/.env
 
 # caches
 .eslintcache
@@ -35,3 +36,12 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # bun
 bun.lock*
+
+# db data
+db-data
+
+# docker
+docker-compose.yml
+!examples/docker-compose.yml
+Dockerfile
+!examples/Dockerfile

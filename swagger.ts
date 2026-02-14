@@ -37,6 +37,10 @@ export const swaggerSpec = {
       name: "Licenses",
       description: "License key management endpoints (requires authentication)",
     },
+    {
+      name: "Documentation",
+      description: "API documentation and OpenAPI specification endpoints",
+    },
   ],
   paths: {
     "/health": {
@@ -81,7 +85,7 @@ export const swaggerSpec = {
       post: {
         summary: "Create a new product",
         description:
-          "Register a new software product/application that can have licenses",
+          "Register a new software product/application that can have licenses. Optionally specify availableTiers to enforce tier-based licensing. If availableTiers is set, all licenses for this product must specify a valid tier.",
         operationId: "addProduct",
         tags: ["Products"],
         security: [{ bearerAuth: [] }],
@@ -104,12 +108,32 @@ export const swaggerSpec = {
                     minLength: 1,
                     example: "My Application",
                   },
+                  availableTiers: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                    },
+                    description:
+                      "Optional array of available tier names (e.g., ['starter', 'pro', 'enterprise']). If specified, licenses for this product will require a tier from this list.",
+                    example: ["starter", "pro", "enterprise"],
+                  },
                 },
                 required: ["id", "name"],
               },
-              example: {
-                id: "myapp",
-                name: "My Application",
+              examples: {
+                "Simple product": {
+                  value: {
+                    id: "myapp",
+                    name: "My Application",
+                  },
+                },
+                "Product with tiers": {
+                  value: {
+                    id: "myapp",
+                    name: "My Application",
+                    availableTiers: ["starter", "pro", "enterprise"],
+                  },
+                },
               },
             },
           },
@@ -146,12 +170,18 @@ export const swaggerSpec = {
             },
           },
           "400": {
-            description: "Missing required fields (id or name)",
+            description:
+              "Missing required fields (id or name) or invalid availableTiers",
             content: {
               "text/plain": {
                 schema: {
                   type: "string",
-                  example: "Missing id or name",
+                  examples: [
+                    "Missing id or name",
+                    "availableTiers must be an array",
+                    "availableTiers cannot contain empty strings",
+                    "availableTiers cannot contain duplicates",
+                  ],
                 },
               },
             },
@@ -195,7 +225,8 @@ export const swaggerSpec = {
     "/products/edit": {
       post: {
         summary: "Update an existing product",
-        description: "Modify the name of an existing product/application",
+        description:
+          "Modify the name or available tiers of an existing product/application. When updating availableTiers, existing licenses with invalid tiers will need to be updated separately. Pass an empty array to remove tier requirements.",
         operationId: "editProduct",
         tags: ["Products"],
         security: [{ bearerAuth: [] }],
@@ -218,12 +249,44 @@ export const swaggerSpec = {
                     minLength: 1,
                     example: "My Updated Application",
                   },
+                  availableTiers: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                    },
+                    description:
+                      "New array of available tier names (optional). Pass empty array to remove all tiers.",
+                    example: ["basic", "premium"],
+                  },
                 },
                 required: ["id"],
               },
-              example: {
-                id: "myapp",
-                name: "My Updated Application",
+              examples: {
+                "Update name": {
+                  value: {
+                    id: "myapp",
+                    name: "My Updated Application",
+                  },
+                },
+                "Add tiers": {
+                  value: {
+                    id: "myapp",
+                    availableTiers: ["basic", "premium"],
+                  },
+                },
+                "Remove tiers": {
+                  value: {
+                    id: "myapp",
+                    availableTiers: [],
+                  },
+                },
+                "Update name and tiers": {
+                  value: {
+                    id: "myapp",
+                    name: "My Updated Application",
+                    availableTiers: ["starter", "professional", "enterprise"],
+                  },
+                },
               },
             },
           },
@@ -255,12 +318,18 @@ export const swaggerSpec = {
             },
           },
           "400": {
-            description: "Missing required field (id)",
+            description:
+              "Missing required field (id) or invalid availableTiers",
             content: {
               "text/plain": {
                 schema: {
                   type: "string",
-                  example: "Missing id",
+                  examples: [
+                    "Missing id",
+                    "availableTiers must be an array",
+                    "availableTiers cannot contain empty strings",
+                    "availableTiers cannot contain duplicates",
+                  ],
                 },
               },
             },
@@ -305,7 +374,7 @@ export const swaggerSpec = {
       post: {
         summary: "Delete a product",
         description:
-          "Remove a product/application from the system. Note: This may affect associated licenses.",
+          "Remove a product/application from the system. Warning: Associated licenses will remain in the database but may become invalid if the product is required for validation. Consider cleaning up licenses before deleting a product.",
         operationId: "deleteProduct",
         tags: ["Products"],
         security: [{ bearerAuth: [] }],
@@ -407,7 +476,8 @@ export const swaggerSpec = {
     "/products/list": {
       get: {
         summary: "List all products",
-        description: "Retrieve a paginated list of all registered products",
+        description:
+          "Retrieve a paginated list of all registered products. Returns product details including ID, name, available tiers (if any), and creation timestamp.",
         operationId: "listProducts",
         tags: ["Products"],
         security: [{ bearerAuth: [] }],
@@ -451,6 +521,15 @@ export const swaggerSpec = {
                         type: "string",
                         example: "My Application",
                       },
+                      availableTiers: {
+                        type: "array",
+                        items: {
+                          type: "string",
+                        },
+                        nullable: true,
+                        description: "Available tier names for this product",
+                        example: ["starter", "pro"],
+                      },
                       createdAt: {
                         type: "string",
                         format: "date-time",
@@ -492,7 +571,7 @@ export const swaggerSpec = {
       post: {
         summary: "Generate a new license key",
         description:
-          "Create a new license key for a product. The license key is automatically generated as a UUID.",
+          "Create a new license key for a product. The license key is automatically generated as a UUID. If the product has availableTiers defined, a tier must be provided and must be one of the product's available tiers.",
         operationId: "addLicense",
         tags: ["Licenses"],
         security: [{ bearerAuth: [] }],
@@ -512,9 +591,9 @@ export const swaggerSpec = {
                   },
                   tier: {
                     type: "string",
-                    enum: ["basic", "max"],
-                    description: "Optional license tier",
-                    example: "max",
+                    description:
+                      "License tier. Required if product has availableTiers defined. Must be one of the product's available tiers.",
+                    example: "pro",
                   },
                   expirationDate: {
                     type: "string",
@@ -541,7 +620,7 @@ export const swaggerSpec = {
                 "With tier": {
                   value: {
                     productId: "myapp",
-                    tier: "max",
+                    tier: "pro",
                     expirationDate: "2025-12-31",
                   },
                 },
@@ -578,12 +657,28 @@ export const swaggerSpec = {
             },
           },
           "400": {
-            description: "Missing required field (productId)",
+            description:
+              "Missing required field (productId), invalid tier, or tier required but not provided",
             content: {
               "text/plain": {
                 schema: {
                   type: "string",
-                  example: "Missing productId",
+                  examples: [
+                    "Missing productId",
+                    "Product 'myapp' requires a tier. Available tiers: starter, pro, enterprise",
+                    "Invalid tier 'premium' for product 'myapp'. Available tiers: starter, pro, enterprise",
+                  ],
+                },
+              },
+            },
+          },
+          "404": {
+            description: "Product not found",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  example: "Product 'myapp' not found",
                 },
               },
             },
@@ -628,7 +723,7 @@ export const swaggerSpec = {
       post: {
         summary: "Update an existing license",
         description:
-          "Modify a license key's product association, tier, or expiration date",
+          "Modify a license key's product association, tier, or expiration date. Tier validation is performed against the target product's availableTiers. If changing the product, ensure the new product supports the license's tier (or update the tier as well).",
         operationId: "editLicense",
         tags: ["Licenses"],
         security: [{ bearerAuth: [] }],
@@ -653,9 +748,9 @@ export const swaggerSpec = {
                   },
                   tier: {
                     type: "string",
-                    enum: ["basic", "max"],
-                    description: "New tier (optional - updates license tier)",
-                    example: "max",
+                    description:
+                      "New tier (optional - updates license tier). Must be valid for the product.",
+                    example: "pro",
                   },
                   expirationDate: {
                     type: "string",
@@ -683,14 +778,14 @@ export const swaggerSpec = {
                 "Update tier": {
                   value: {
                     key: "550e8400-e29b-41d4-a716-446655440000",
-                    tier: "basic",
+                    tier: "pro",
                   },
                 },
                 "Update all": {
                   value: {
                     key: "550e8400-e29b-41d4-a716-446655440000",
                     productId: "newapp",
-                    tier: "max",
+                    tier: "enterprise",
                     expirationDate: "2026-06-30",
                   },
                 },
@@ -725,12 +820,31 @@ export const swaggerSpec = {
             },
           },
           "400": {
-            description: "Missing required field (key)",
+            description:
+              "Missing required field (key), invalid tier, or tier validation failure",
             content: {
               "text/plain": {
                 schema: {
                   type: "string",
-                  example: "Missing key",
+                  examples: [
+                    "Missing key",
+                    "Product 'myapp' requires a tier. Available tiers: starter, pro",
+                    "Invalid tier 'premium' for product 'myapp'. Available tiers: starter, pro",
+                  ],
+                },
+              },
+            },
+          },
+          "404": {
+            description: "License or product not found",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  examples: [
+                    "License 'key-123' not found",
+                    "Product 'myapp' not found",
+                  ],
                 },
               },
             },
@@ -774,7 +888,8 @@ export const swaggerSpec = {
     "/licenses/delete": {
       post: {
         summary: "Revoke a license key",
-        description: "Delete/revoke a license key from the system",
+        description:
+          "Delete/revoke a license key from the system. This action is permanent and the license will immediately become invalid for validation requests.",
         operationId: "deleteLicense",
         tags: ["Licenses"],
         security: [{ bearerAuth: [] }],
@@ -876,7 +991,8 @@ export const swaggerSpec = {
     "/licenses/list": {
       get: {
         summary: "List all licenses",
-        description: "Retrieve a paginated list of all generated licenses",
+        description:
+          "Retrieve a paginated list of all generated licenses. Returns license details including key, product ID, tier (if applicable), expiration date, and creation timestamp.",
         operationId: "listLicenses",
         tags: ["Licenses"],
         security: [{ bearerAuth: [] }],
@@ -919,6 +1035,12 @@ export const swaggerSpec = {
                       productId: {
                         type: "string",
                         example: "myapp",
+                      },
+                      tier: {
+                        type: "string",
+                        nullable: true,
+                        description: "License tier (if applicable)",
+                        example: "pro",
                       },
                       expirationDate: {
                         type: "string",
@@ -967,7 +1089,7 @@ export const swaggerSpec = {
       post: {
         summary: "Validate a license key",
         description:
-          "Validates a license key and returns license information. This endpoint does not require authentication.",
+          "Validates a license key and returns license information including product ID, tier (if applicable), and expiration date. This endpoint does NOT require authentication and can be called by end-user applications to verify license validity.",
         operationId: "validateLicense",
         tags: ["Licenses"],
         requestBody: {
@@ -1010,9 +1132,10 @@ export const swaggerSpec = {
                         },
                         tier: {
                           type: "string",
-                          enum: ["basic", "max"],
                           nullable: true,
-                          example: "max",
+                          description:
+                            "License tier (dynamically validated against product's availableTiers)",
+                          example: "pro",
                         },
                         expirationDate: {
                           type: "string",
@@ -1048,6 +1171,39 @@ export const swaggerSpec = {
                       },
                     },
                   ],
+                },
+                examples: {
+                  "Valid license with tier": {
+                    value: {
+                      valid: true,
+                      productId: "myapp",
+                      tier: "pro",
+                      expirationDate: "2026-12-31T23:59:59Z",
+                      createdAt: "2025-02-10T12:00:00Z",
+                    },
+                  },
+                  "Valid license without tier or expiration": {
+                    value: {
+                      valid: true,
+                      productId: "myapp",
+                      tier: null,
+                      expirationDate: null,
+                      createdAt: "2025-02-10T12:00:00Z",
+                    },
+                  },
+                  "License not found": {
+                    value: {
+                      valid: false,
+                      reason: "License key not found",
+                    },
+                  },
+                  "Expired license": {
+                    value: {
+                      valid: false,
+                      reason: "License has expired",
+                      expirationDate: "2024-12-31T23:59:59Z",
+                    },
+                  },
                 },
               },
             },
@@ -1153,6 +1309,16 @@ export const swaggerSpec = {
             description: "Human-readable product name",
             example: "My Application",
           },
+          availableTiers: {
+            type: "array",
+            items: {
+              type: "string",
+            },
+            nullable: true,
+            description:
+              "Available tier names for this product. If specified, licenses require a tier from this list.",
+            example: ["starter", "pro", "enterprise"],
+          },
           createdAt: {
             type: "string",
             format: "date-time",
@@ -1178,10 +1344,10 @@ export const swaggerSpec = {
           },
           tier: {
             type: "string",
-            enum: ["basic", "max"],
             nullable: true,
-            description: "License tier (optional)",
-            example: "max",
+            description:
+              "License tier (dynamically validated against product's availableTiers)",
+            example: "pro",
           },
           expirationDate: {
             type: "string",

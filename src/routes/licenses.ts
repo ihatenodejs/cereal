@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { db } from "../db/index.ts";
-import { licenses } from "../db/schema.ts";
+import { applications, licenses } from "../db/schema.ts";
 import { authenticate } from "../middleware/auth.ts";
 
 interface LicenseRequestBody {
@@ -96,17 +96,39 @@ export async function handleLicensesRequest(req: Request): Promise<Response> {
         return new Response("Missing productId", { status: 400 });
       }
 
-      if (tier && tier !== "basic" && tier !== "max") {
-        return new Response("Invalid tier value. Must be 'basic' or 'max'", {
-          status: 400,
+      const [product] = await db
+        .select()
+        .from(applications)
+        .where(eq(applications.id, productId))
+        .limit(1);
+
+      if (!product) {
+        return new Response(`Product '${productId}' not found`, {
+          status: 404,
         });
+      }
+
+      if (product.availableTiers && product.availableTiers.length > 0) {
+        if (!tier) {
+          return new Response(
+            `Product '${productId}' requires a tier. Available tiers: ${product.availableTiers.join(", ")}`,
+            { status: 400 },
+          );
+        }
+
+        if (!product.availableTiers.includes(tier)) {
+          return new Response(
+            `Invalid tier '${tier}' for product '${productId}'. Available tiers: ${product.availableTiers.join(", ")}`,
+            { status: 400 },
+          );
+        }
       }
 
       const key = crypto.randomUUID();
       await db.insert(licenses).values({
         key,
         productId,
-        tier: tier ? (tier as "basic" | "max") : null,
+        tier: tier || null,
         expirationDate: expirationDate ? new Date(expirationDate) : null,
       });
 
@@ -121,21 +143,56 @@ export async function handleLicensesRequest(req: Request): Promise<Response> {
         return new Response("Missing key", { status: 400 });
       }
 
-      if (tier && tier !== "basic" && tier !== "max") {
-        return new Response("Invalid tier value. Must be 'basic' or 'max'", {
-          status: 400,
+      const [currentLicense] = await db
+        .select()
+        .from(licenses)
+        .where(eq(licenses.key, key))
+        .limit(1);
+
+      if (!currentLicense) {
+        return new Response(`License '${key}' not found`, { status: 404 });
+      }
+
+      const targetProductId = productId || currentLicense.productId;
+
+      const [product] = await db
+        .select()
+        .from(applications)
+        .where(eq(applications.id, targetProductId))
+        .limit(1);
+
+      if (!product) {
+        return new Response(`Product '${targetProductId}' not found`, {
+          status: 404,
         });
+      }
+
+      const targetTier = tier !== undefined ? tier : currentLicense.tier;
+
+      if (product.availableTiers && product.availableTiers.length > 0) {
+        if (!targetTier) {
+          return new Response(
+            `Product '${targetProductId}' requires a tier. Available tiers: ${product.availableTiers.join(", ")}`,
+            { status: 400 },
+          );
+        }
+
+        if (!product.availableTiers.includes(targetTier)) {
+          return new Response(
+            `Invalid tier '${targetTier}' for product '${targetProductId}'. Available tiers: ${product.availableTiers.join(", ")}`,
+            { status: 400 },
+          );
+        }
       }
 
       const updateData: {
         productId?: string;
-        tier?: "basic" | "max" | null;
+        tier?: string | null;
         expirationDate?: Date | null;
       } = {};
 
       if (productId !== undefined) updateData.productId = productId;
-      if (tier !== undefined)
-        updateData.tier = tier ? (tier as "basic" | "max") : null;
+      if (tier !== undefined) updateData.tier = tier || null;
       if (expirationDate !== undefined)
         updateData.expirationDate = expirationDate
           ? new Date(expirationDate)

@@ -102,4 +102,119 @@ describe("Products Endpoints", () => {
 
     expect(mockSelect).toHaveBeenCalled();
   });
+
+  test("POST /products/add should create a product with availableTiers", async () => {
+    const product = createMockProduct({
+      id: "prod_123",
+      name: "Tiered Product",
+      availableTiers: ["starter", "pro", "enterprise"],
+    });
+    const req = new Request("http://localhost/products/add", {
+      method: "POST",
+      body: JSON.stringify(product),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { success: boolean; id: string };
+    expect(body.success).toBe(true);
+    expect(body.id).toBe(product.id);
+
+    expect(mockInsert).toHaveBeenCalled();
+  });
+
+  test("POST /products/add should fail with non-array availableTiers", async () => {
+    const req = new Request("http://localhost/products/add", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "prod_123",
+        name: "Test",
+        availableTiers: "not-an-array",
+      }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("availableTiers must be an array");
+  });
+
+  test("POST /products/add should fail with empty string in availableTiers", async () => {
+    const req = new Request("http://localhost/products/add", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "prod_123",
+        name: "Test",
+        availableTiers: ["basic", "", "pro"],
+      }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe(
+      "availableTiers cannot contain empty strings",
+    );
+  });
+
+  test("POST /products/add should fail with duplicate tiers", async () => {
+    const req = new Request("http://localhost/products/add", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "prod_123",
+        name: "Test",
+        availableTiers: ["basic", "pro", "basic"],
+      }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("availableTiers cannot contain duplicates");
+  });
+
+  test("POST /products/edit should update product availableTiers", async () => {
+    const req = new Request("http://localhost/products/edit", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "prod_123",
+        availableTiers: ["basic", "premium"],
+      }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { success: boolean };
+    expect(body.success).toBe(true);
+
+    expect(mockUpdate).toHaveBeenCalled();
+  });
+
+  test("POST /products/edit should clear availableTiers with empty array", async () => {
+    const req = new Request("http://localhost/products/edit", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "prod_123",
+        availableTiers: [],
+      }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { success: boolean };
+    expect(body.success).toBe(true);
+
+    expect(mockUpdate).toHaveBeenCalled();
+  });
+
+  test("POST /products/edit should fail with invalid availableTiers", async () => {
+    const req = new Request("http://localhost/products/edit", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "prod_123",
+        availableTiers: ["basic", "basic", "pro"],
+      }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("availableTiers cannot contain duplicates");
+  });
 });

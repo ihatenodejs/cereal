@@ -14,7 +14,9 @@
 **Database Schema**:
 
 - `applications` - Software products that can be licensed
+  - Supports optional `availableTiers` array for tier-based licensing
 - `licenses` - License keys linked to products with optional expiration
+  - Includes optional `tier` field (required if product has availableTiers)
 - `api_keys` - API keys for authenticating requests
 
 ## Available API Routes
@@ -28,15 +30,18 @@
 
 ### Products (Authenticated)
 
-- `POST /products/add` - Create new product (requires `id`, `name`)
-- `POST /products/edit` - Update product (requires `id`, optional `name`)
+- `POST /products/add` - Create new product (requires `id`, `name`, optional `availableTiers`)
+- `POST /products/edit` - Update product (requires `id`, optional `name`, `availableTiers`)
 - `POST /products/delete` - Delete product (requires `id`)
+- `GET /products/list` - List all products with pagination
 
 ### Licenses (Authenticated)
 
-- `POST /licenses/add` - Generate new license (requires `productId`, optional `expirationDate`)
-- `POST /licenses/edit` - Update license (requires `key`, optional `productId`, `expirationDate`)
+- `POST /licenses/add` - Generate new license (requires `productId`, optional `tier`, `expirationDate`)
+- `POST /licenses/edit` - Update license (requires `key`, optional `productId`, `tier`, `expirationDate`)
 - `POST /licenses/delete` - Revoke license (requires `key`)
+- `GET /licenses/list` - List all licenses with pagination
+- `POST /licenses/validate` - Validate a license key (PUBLIC - no auth required)
 
 **Authentication**: All authenticated routes require `Authorization: Bearer <api-key>` header
 

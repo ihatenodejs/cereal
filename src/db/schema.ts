@@ -3,6 +3,7 @@ import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
 export const applications = pgTable("applications", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  availableTiers: text("available_tiers").array(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -11,7 +12,7 @@ export const licenses = pgTable("licenses", {
   productId: text("product_id")
     .references(() => applications.id)
     .notNull(),
-  tier: text("tier", { enum: ["basic", "max"] }),
+  tier: text("tier"),
   expirationDate: timestamp("expiration_date"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
