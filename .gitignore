@@ -40,6 +40,9 @@ bun.lock*
 # db data
 db-data
 
+# drizzle
+drizzle/
+
 # docker
 docker-compose.yml
 !examples/docker-compose.yml

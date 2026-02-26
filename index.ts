@@ -1,5 +1,6 @@
 import packageJson from "./package.json";
 import { config } from "./src/config/server.ts";
+import { handleDownloadsRequest } from "./src/routes/downloads.ts";
 import { handleRoot, handleHealth } from "./src/routes/health.ts";
 import { handleLicensesRequest } from "./src/routes/licenses.ts";
 import { handleProductsRequest } from "./src/routes/products.ts";
@@ -28,6 +29,11 @@ const server = Bun.serve({
     // License endpoints
     if (url.pathname.startsWith("/licenses")) {
       return handleLicensesRequest(req);
+    }
+
+    // Downloads endpoints
+    if (url.pathname.startsWith("/downloads")) {
+      return handleDownloadsRequest(req);
     }
 
     // Swagger documentation endpoints

@@ -1,9 +1,26 @@
+# Dependencies
 node_modules/
+
+# Next.js
 .next/
+
+# Postgres & DB
 db-data/
+drizzle/
+
+# Environment variables
 .env*
+
+# Bun
 bun.lock*
-.DS_Store
-Thumbs.db
+
+# IDE
 .vscode/
 .idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+LICENSE

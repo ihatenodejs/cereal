@@ -38,6 +38,11 @@ export const swaggerSpec = {
       description: "License key management endpoints (requires authentication)",
     },
     {
+      name: "Downloads",
+      description:
+        "Binary and zip file management. Admins upload files via Bearer auth; licensed users access files using their license key.",
+    },
+    {
       name: "Documentation",
       description: "API documentation and OpenAPI specification endpoints",
     },
@@ -1244,6 +1249,495 @@ export const swaggerSpec = {
         },
       },
     },
+    "/downloads/upload": {
+      post: {
+        summary: "Upload a binary or zip file",
+        description:
+          "Upload a file and link it to a product with a version tag. If a file with the same version already exists for the product, it is replaced. Computes and stores a SHA256 checksum automatically. Requires admin Bearer authentication.",
+        operationId: "uploadDownload",
+        tags: ["Downloads"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "multipart/form-data": {
+              schema: {
+                type: "object",
+                required: ["productId", "version", "file"],
+                properties: {
+                  productId: {
+                    type: "string",
+                    description: "Product identifier this file belongs to",
+                    example: "myapp",
+                  },
+                  version: {
+                    type: "string",
+                    description: "Version tag for this file (e.g. 1.2.0)",
+                    example: "1.2.0",
+                  },
+                  file: {
+                    type: "string",
+                    format: "binary",
+                    description: "The binary or zip file to upload",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "File uploaded successfully",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    id: {
+                      type: "string",
+                      format: "uuid",
+                      description: "Unique identifier for this download entry",
+                      example: "550e8400-e29b-41d4-a716-446655440000",
+                    },
+                    sha256: {
+                      type: "string",
+                      description: "SHA256 checksum of the uploaded file",
+                      example:
+                        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    },
+                  },
+                  required: ["success", "id", "sha256"],
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Missing required fields or wrong content-type",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  examples: [
+                    "Missing productId",
+                    "Missing version",
+                    "Missing file",
+                    "Content-Type must be multipart/form-data",
+                  ],
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized - Invalid or missing API key",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Unauthorized" },
+              },
+            },
+          },
+          "404": {
+            description: "Product not found",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  example: "Product 'myapp' not found",
+                },
+              },
+            },
+          },
+          "500": {
+            description: "Internal server error",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Internal Server Error" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/downloads/delete": {
+      post: {
+        summary: "Delete a download entry",
+        description:
+          "Remove a file entry from the database and delete the file from disk. Requires admin Bearer authentication.",
+        operationId: "deleteDownload",
+        tags: ["Downloads"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["id"],
+                properties: {
+                  id: {
+                    type: "string",
+                    format: "uuid",
+                    description: "Download entry ID to delete",
+                    example: "550e8400-e29b-41d4-a716-446655440000",
+                  },
+                },
+              },
+              example: { id: "550e8400-e29b-41d4-a716-446655440000" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "File deleted successfully",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    id: {
+                      type: "string",
+                      example: "550e8400-e29b-41d4-a716-446655440000",
+                    },
+                  },
+                  required: ["success", "id"],
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Missing required field (id)",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Missing id" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized - Invalid or missing API key",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Unauthorized" },
+              },
+            },
+          },
+          "404": {
+            description: "Download entry not found",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  example: "Download '550e8400-...' not found",
+                },
+              },
+            },
+          },
+          "500": {
+            description: "Internal server error",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Internal Server Error" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/downloads/list": {
+      get: {
+        summary: "List all download entries",
+        description:
+          "Retrieve a paginated list of all uploaded files with their metadata. Does not expose the internal file path. Requires admin Bearer authentication.",
+        operationId: "listDownloads",
+        tags: ["Downloads"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "limit",
+            in: "query",
+            description: "Number of items to return (default 10, max 100)",
+            schema: { type: "integer", default: 10, maximum: 100 },
+          },
+          {
+            name: "page",
+            in: "query",
+            description: "Page number (default 1)",
+            schema: { type: "integer", default: 1, minimum: 1 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "List of download entries",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: {
+                        type: "string",
+                        format: "uuid",
+                        example: "550e8400-e29b-41d4-a716-446655440000",
+                      },
+                      productId: { type: "string", example: "myapp" },
+                      version: { type: "string", example: "1.2.0" },
+                      filename: {
+                        type: "string",
+                        example: "myapp-1.2.0-linux-amd64.zip",
+                      },
+                      sha256: {
+                        type: "string",
+                        example:
+                          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                      },
+                      createdAt: {
+                        type: "string",
+                        format: "date-time",
+                        example: "2024-01-01T00:00:00.000Z",
+                      },
+                    },
+                    required: [
+                      "id",
+                      "productId",
+                      "version",
+                      "filename",
+                      "sha256",
+                      "createdAt",
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized - Invalid or missing API key",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Unauthorized" },
+              },
+            },
+          },
+          "500": {
+            description: "Internal server error",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Internal Server Error" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/downloads/files": {
+      get: {
+        summary: "List available files for a license",
+        description:
+          "Returns all downloadable files linked to the product associated with the provided license key. Each entry includes the version, filename, a direct download URL, and the SHA256 checksum. No admin authentication required — a valid license key is sufficient.",
+        operationId: "getDownloadFiles",
+        tags: ["Downloads"],
+        parameters: [
+          {
+            name: "licenseKey",
+            in: "query",
+            required: true,
+            description: "Valid license key",
+            schema: { type: "string", format: "uuid" },
+            example: "550e8400-e29b-41d4-a716-446655440000",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "List of available files",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: {
+                        type: "string",
+                        format: "uuid",
+                        example: "550e8400-e29b-41d4-a716-446655440000",
+                      },
+                      version: { type: "string", example: "1.2.0" },
+                      filename: {
+                        type: "string",
+                        example: "myapp-1.2.0-linux-amd64.zip",
+                      },
+                      url: {
+                        type: "string",
+                        description:
+                          "Direct download URL (includes licenseKey)",
+                        example:
+                          "https://cereal.aidan.so/downloads/get/550e8400-e29b-41d4-a716-446655440000?licenseKey=...",
+                      },
+                      sha256: {
+                        type: "string",
+                        example:
+                          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                      },
+                      createdAt: {
+                        type: "string",
+                        format: "date-time",
+                        example: "2024-01-01T00:00:00.000Z",
+                      },
+                    },
+                    required: [
+                      "id",
+                      "version",
+                      "filename",
+                      "url",
+                      "sha256",
+                      "createdAt",
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Missing licenseKey query parameter",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Missing licenseKey" },
+              },
+            },
+          },
+          "403": {
+            description: "Invalid or expired license key",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    valid: { type: "boolean", example: false },
+                    reason: {
+                      type: "string",
+                      example: "License key not found",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "405": {
+            description: "Method not allowed",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Method Not Allowed" },
+              },
+            },
+          },
+          "500": {
+            description: "Internal server error",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Internal Server Error" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/downloads/get/{id}": {
+      get: {
+        summary: "Download a file",
+        description:
+          "Streams a file to the client after validating the provided license key. The license must be valid and associated with the same product as the file. No admin authentication required.",
+        operationId: "getDownloadFile",
+        tags: ["Downloads"],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            description: "Download entry ID",
+            schema: { type: "string", format: "uuid" },
+            example: "550e8400-e29b-41d4-a716-446655440000",
+          },
+          {
+            name: "licenseKey",
+            in: "query",
+            required: true,
+            description: "Valid license key",
+            schema: { type: "string", format: "uuid" },
+            example: "550e8400-e29b-41d4-a716-446655440000",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "File stream",
+            headers: {
+              "Content-Disposition": {
+                description:
+                  'Attachment header with filename (e.g. attachment; filename="myapp-1.2.0.zip")',
+                schema: { type: "string" },
+              },
+              "X-SHA256": {
+                description: "SHA256 checksum of the file",
+                schema: { type: "string" },
+              },
+            },
+            content: {
+              "application/octet-stream": {
+                schema: { type: "string", format: "binary" },
+              },
+            },
+          },
+          "400": {
+            description: "Missing licenseKey query parameter",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Missing licenseKey" },
+              },
+            },
+          },
+          "403": {
+            description: "Invalid or expired license key",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    valid: { type: "boolean", example: false },
+                    reason: {
+                      type: "string",
+                      example: "License has expired",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "404": {
+            description: "File not found or not accessible with this license",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "File not found" },
+              },
+            },
+          },
+          "405": {
+            description: "Method not allowed",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Method Not Allowed" },
+              },
+            },
+          },
+          "500": {
+            description: "Internal server error",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Internal Server Error" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/swagger": {
       get: {
         summary: "Swagger UI documentation",
@@ -1379,6 +1873,52 @@ export const swaggerSpec = {
         type: "string",
         description: "Error message",
         example: "Error description",
+      },
+      Download: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            format: "uuid",
+            description: "Unique download entry identifier",
+            example: "550e8400-e29b-41d4-a716-446655440000",
+          },
+          productId: {
+            type: "string",
+            description: "Associated product identifier",
+            example: "myapp",
+          },
+          version: {
+            type: "string",
+            description: "Version tag",
+            example: "1.2.0",
+          },
+          filename: {
+            type: "string",
+            description: "Original filename",
+            example: "myapp-1.2.0-linux-amd64.zip",
+          },
+          sha256: {
+            type: "string",
+            description: "SHA256 checksum of the file",
+            example:
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          },
+          createdAt: {
+            type: "string",
+            format: "date-time",
+            description: "Timestamp when the entry was created",
+            example: "2024-01-15T10:30:00Z",
+          },
+        },
+        required: [
+          "id",
+          "productId",
+          "version",
+          "filename",
+          "sha256",
+          "createdAt",
+        ],
       },
     },
   },
