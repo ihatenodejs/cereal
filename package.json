@@ -34,7 +34,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "prettier": "^3.8.1",
-    "typescript-eslint": "^8.55.0"
+    "typescript-eslint": "^8.56.1"
   },
   "peerDependencies": {
     "typescript": "^5"
@@ -42,6 +42,6 @@
   "dependencies": {
     "drizzle-orm": "^0.45.1",
     "postgres": "^3.4.8",
-    "swagger-ui-dist": "^5.31.0"
+    "swagger-ui-dist": "^5.31.2"
   }
 }
