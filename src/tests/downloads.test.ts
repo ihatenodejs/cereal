@@ -8,6 +8,7 @@ import {
   mockUpdate,
   mockDelete,
   mockSelect,
+  setAuthResult,
 } from "./helpers/test-mocks.ts";
 
 mock.module("node:fs/promises", () => ({
@@ -595,6 +596,234 @@ describe("Downloads User Endpoints", () => {
 
     expect(res.status).toBe(400);
     expect(await res.text()).toBe("Missing licenseKey");
+  });
+
+  test("GET /downloads/get/:id with plaintext=true should return file content as text", async () => {
+    const futureDate = new Date();
+    futureDate.setFullYear(futureDate.getFullYear() + 1);
+
+    const license = {
+      key: "valid-key-plaintext",
+      productId: "prod_abc",
+      tier: null,
+      expirationDate: futureDate,
+      createdAt: new Date(),
+    };
+
+    const file = {
+      id: "dl_plaintext",
+      productId: "prod_abc",
+      version: "1.0.0",
+      filename: "readme.txt",
+      filePath: "./uploads/prod_abc/1.0.0/readme.txt",
+      sha256: "plain123",
+      createdAt: new Date(),
+    };
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([license]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([file]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    (Bun as unknown as Record<string, unknown>).file = (_path: string) => ({
+      exists: () => Promise.resolve(true),
+      text: () => Promise.resolve("Hello, this is plaintext content!"),
+      type: "text/plain",
+      size: 30,
+    });
+
+    const req = new Request(
+      "http://localhost/downloads/get/dl_plaintext?licenseKey=valid-key-plaintext&plaintext=true",
+    );
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+    expect(res.headers.get("Content-Disposition")).toContain("inline");
+    expect(res.headers.get("Content-Disposition")).toContain("readme.txt");
+    expect(res.headers.get("X-SHA256")).toBe("plain123");
+    expect(await res.text()).toBe("Hello, this is plaintext content!");
+  });
+
+  test("GET /downloads/get/:id with plaintext=false should download as attachment", async () => {
+    const futureDate = new Date();
+    futureDate.setFullYear(futureDate.getFullYear() + 1);
+
+    const license = {
+      key: "valid-key-noplain",
+      productId: "prod_abc",
+      tier: null,
+      expirationDate: futureDate,
+      createdAt: new Date(),
+    };
+
+    const file = {
+      id: "dl_noplain",
+      productId: "prod_abc",
+      version: "1.0.0",
+      filename: "data.zip",
+      filePath: "./uploads/prod_abc/1.0.0/data.zip",
+      sha256: "zip456",
+      createdAt: new Date(),
+    };
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([license]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([file]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    (Bun as unknown as Record<string, unknown>).file = (_path: string) => ({
+      exists: () => Promise.resolve(true),
+      stream: () => new ReadableStream(),
+      type: "application/zip",
+      size: 100,
+    });
+
+    const req = new Request(
+      "http://localhost/downloads/get/dl_noplain?licenseKey=valid-key-noplain&plaintext=false",
+    );
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Disposition")).toContain("attachment");
+    expect(res.headers.get("Content-Disposition")).toContain("data.zip");
+    expect(res.headers.get("X-SHA256")).toBe("zip456");
+  });
+
+  test("GET /downloads/get/:id should return 404 when file not found on disk", async () => {
+    const futureDate = new Date();
+    futureDate.setFullYear(futureDate.getFullYear() + 1);
+
+    const license = {
+      key: "valid-key-disk",
+      productId: "prod_abc",
+      tier: null,
+      expirationDate: futureDate,
+      createdAt: new Date(),
+    };
+
+    const file = {
+      id: "dl_missing",
+      productId: "prod_abc",
+      version: "1.0.0",
+      filename: "missing.zip",
+      filePath: "./uploads/prod_abc/1.0.0/missing.zip",
+      sha256: "abc123",
+      createdAt: new Date(),
+    };
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([license]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([file]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    (Bun as unknown as Record<string, unknown>).file = (_path: string) => ({
+      exists: () => Promise.resolve(false),
+    });
+
+    const req = new Request(
+      "http://localhost/downloads/get/dl_missing?licenseKey=valid-key-disk",
+    );
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("File not found on disk");
+  });
+
+  test("GET /downloads/files should work with perpetual license (null expiration)", async () => {
+    const license = {
+      key: "perpetual-key",
+      productId: "prod_abc",
+      tier: null,
+      expirationDate: null,
+      createdAt: new Date(),
+    };
+
+    const files = [
+      {
+        id: "dl_1",
+        productId: "prod_abc",
+        version: "1.0.0",
+        filename: "app-1.0.0.zip",
+        filePath: "./uploads/prod_abc/1.0.0/app-1.0.0.zip",
+        sha256: "abc123",
+        createdAt: new Date("2024-01-01T00:00:00Z"),
+      },
+    ];
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([license]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => Promise.resolve(files),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    const req = new Request(
+      "http://localhost/downloads/files?licenseKey=perpetual-key",
+    );
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as unknown[];
+    expect(body).toHaveLength(1);
+  });
+
+  test("should return 401 when authentication fails for admin endpoints", async () => {
+    setAuthResult(false);
+
+    const req = new Request("http://localhost/downloads/list?limit=10&page=1");
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe("Unauthorized");
   });
 });
 

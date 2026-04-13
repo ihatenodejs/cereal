@@ -129,6 +129,18 @@ export async function handleDownloadsRequest(req: Request): Promise<Response> {
         return new Response("File not found on disk", { status: 404 });
       }
 
+      const plaintext = url.searchParams.get("plaintext");
+      if (plaintext === "true") {
+        const content = await bunFile.text();
+        return new Response(content, {
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Content-Disposition": `inline; filename="${file.filename}"`,
+            "X-SHA256": file.sha256,
+          },
+        });
+      }
+
       return new Response(bunFile, {
         headers: {
           "Content-Disposition": `attachment; filename="${file.filename}"`,

@@ -9,6 +9,9 @@ import {
   mockUpdate,
   mockDelete,
   mockSelect,
+  setAuthResult,
+  mockDbError,
+  resetDbMocks,
 } from "./helpers/test-mocks.ts";
 
 setupMocks();
@@ -216,5 +219,122 @@ describe("Products Endpoints", () => {
     const res = await handleProductsRequest(req);
     expect(res.status).toBe(400);
     expect(await res.text()).toBe("availableTiers cannot contain duplicates");
+  });
+
+  test("POST /products/add should fail with missing id", async () => {
+    const req = new Request("http://localhost/products/add", {
+      method: "POST",
+      body: JSON.stringify({ name: "Test Product" }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Missing id or name");
+  });
+
+  test("POST /products/edit should fail with missing id", async () => {
+    const req = new Request("http://localhost/products/edit", {
+      method: "POST",
+      body: JSON.stringify({ name: "Updated Name" }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Missing id");
+  });
+
+  test("POST /products/delete should fail with missing id", async () => {
+    const req = new Request("http://localhost/products/delete", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Missing id");
+  });
+
+  test("should return 401 when authentication fails", async () => {
+    setAuthResult(false);
+
+    const req = new Request("http://localhost/products/add", {
+      method: "POST",
+      body: JSON.stringify({ id: "prod_123", name: "Test" }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe("Unauthorized");
+  });
+
+  test("should return 405 for unsupported HTTP methods", async () => {
+    const req = new Request("http://localhost/products/add", {
+      method: "PUT",
+      body: JSON.stringify({ id: "prod_123", name: "Test" }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(405);
+    expect(await res.text()).toBe("Method Not Allowed");
+  });
+
+  test("should return 404 for unknown product routes", async () => {
+    const req = new Request("http://localhost/products/unknown", {
+      method: "POST",
+      body: JSON.stringify({ id: "prod_123" }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("Not Found");
+  });
+
+  test("should return 500 on database error", async () => {
+    mockDbError();
+
+    const req = new Request("http://localhost/products/add", {
+      method: "POST",
+      body: JSON.stringify({ id: "prod_123", name: "Test" }),
+    });
+
+    const res = await handleProductsRequest(req);
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe("Internal Server Error");
+
+    resetDbMocks();
+  });
+
+  test("GET /products/list should use default pagination values", async () => {
+    mockSelect.mockImplementation(() => ({
+      from: () => ({
+        limit: () => ({
+          offset: () => Promise.resolve([]),
+        }),
+      }),
+    }));
+
+    const req = new Request("http://localhost/products/list");
+    const res = await handleProductsRequest(req);
+
+    expect(res.status).toBe(200);
+    expect(mockSelect).toHaveBeenCalled();
+  });
+
+  test("GET /products/list should cap limit at 100", async () => {
+    const products = [createMockProduct({ id: "prod_1", name: "Product 1" })];
+
+    mockSelect.mockImplementation(() => ({
+      from: () => ({
+        limit: () => ({
+          offset: () => Promise.resolve(products),
+        }),
+      }),
+    }));
+
+    const req = new Request("http://localhost/products/list?limit=200");
+    const res = await handleProductsRequest(req);
+
+    expect(res.status).toBe(200);
+    expect(mockSelect).toHaveBeenCalled();
   });
 });

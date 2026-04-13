@@ -22,4 +22,22 @@ describe("Health Endpoints", () => {
     expect(body).toHaveProperty("runtime");
     expect(typeof body.runtime).toBe("number");
   });
+
+  test("handleHealth should accept any HTTP method", async () => {
+    const req = new Request("http://localhost/health", { method: "POST" });
+    const res = handleHealth(req);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { version: string; runtime: number };
+    expect(body).toHaveProperty("version");
+    expect(body).toHaveProperty("runtime");
+  });
+
+  test("handleRoot should accept any HTTP method", () => {
+    const req = new Request("http://localhost/", { method: "DELETE" });
+    const res = handleRoot(req);
+
+    expect(res.status).toBe(308);
+    expect(res.headers.get("Location")).toBe("/health");
+  });
 });

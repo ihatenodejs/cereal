@@ -1,5 +1,6 @@
 services:
   cereal:
+    container_name: cereal
     build: .
     ports:
       - "3000:3000"
@@ -9,6 +10,7 @@ services:
     depends_on:
       - postgres
   postgres:
+    container_name: cereal-postgres
     image: postgres:15-alpine
     restart: always
     environment:

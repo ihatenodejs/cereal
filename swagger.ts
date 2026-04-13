@@ -1,10 +1,12 @@
+import { version } from "./package.json";
+
 export const swaggerSpec = {
   openapi: "3.1.0",
   info: {
     title: "Cereal API",
     description:
       "License key management API for software products. Provides product registration, license key generation, and API key authentication.",
-    version: "1.0.0",
+    version,
     contact: {
       email: "aidan@p0ntus.com",
     },
@@ -1665,14 +1667,24 @@ export const swaggerSpec = {
             schema: { type: "string", format: "uuid" },
             example: "550e8400-e29b-41d4-a716-446655440000",
           },
+          {
+            name: "plaintext",
+            in: "query",
+            required: false,
+            description:
+              "If 'true', returns file content as plaintext for viewing instead of downloading",
+            schema: { type: "string", enum: ["true", "false"] },
+            example: "true",
+          },
         ],
         responses: {
           "200": {
-            description: "File stream",
+            description:
+              "File content - either streamed as download (default) or as plaintext if plaintext=true",
             headers: {
               "Content-Disposition": {
                 description:
-                  'Attachment header with filename (e.g. attachment; filename="myapp-1.2.0.zip")',
+                  "'inline' for plaintext mode, 'attachment' for download mode (with filename)",
                 schema: { type: "string" },
               },
               "X-SHA256": {
@@ -1683,6 +1695,9 @@ export const swaggerSpec = {
             content: {
               "application/octet-stream": {
                 schema: { type: "string", format: "binary" },
+              },
+              "text/plain": {
+                schema: { type: "string" },
               },
             },
           },

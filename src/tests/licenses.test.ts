@@ -9,6 +9,9 @@ import {
   mockUpdate,
   mockDelete,
   mockSelect,
+  setAuthResult,
+  mockDbError,
+  resetDbMocks,
 } from "./helpers/test-mocks.ts";
 
 setupMocks();
@@ -345,6 +348,182 @@ describe("Licenses Endpoints", () => {
     });
 
     expect(mockSelect).toHaveBeenCalled();
+  });
+
+  test("POST /licenses/edit should fail with missing key", async () => {
+    const req = new Request("http://localhost/licenses/edit", {
+      method: "POST",
+      body: JSON.stringify({ productId: "prod_123" }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Missing key");
+  });
+
+  test("POST /licenses/delete should fail with missing key", async () => {
+    const req = new Request("http://localhost/licenses/delete", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Missing key");
+  });
+
+  test("should return 401 when authentication fails", async () => {
+    setAuthResult(false);
+
+    const req = new Request("http://localhost/licenses/add", {
+      method: "POST",
+      body: JSON.stringify({ productId: "prod_123" }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe("Unauthorized");
+  });
+
+  test("should return 405 for unsupported HTTP methods on POST endpoints", async () => {
+    const req = new Request("http://localhost/licenses/add", {
+      method: "GET",
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(405);
+    expect(await res.text()).toBe("Method Not Allowed");
+  });
+
+  test("should return 404 for unknown license routes", async () => {
+    const req = new Request("http://localhost/licenses/unknown", {
+      method: "POST",
+      body: JSON.stringify({ key: "test" }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("Not Found");
+  });
+
+  test("should return 500 on database error", async () => {
+    mockDbError();
+
+    const req = new Request("http://localhost/licenses/add", {
+      method: "POST",
+      body: JSON.stringify({ productId: "prod_123" }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe("Internal Server Error");
+
+    resetDbMocks();
+  });
+
+  test("POST /licenses/add should create a license with expirationDate", async () => {
+    const expirationDate = new Date("2025-12-31T23:59:59Z");
+
+    mockSelect.mockImplementation(() => ({
+      from: () => ({
+        where: () => ({
+          limit: () =>
+            Promise.resolve([
+              { id: "prod_123", name: "Product", availableTiers: null },
+            ]),
+        }),
+        limit: () => ({
+          offset: () => Promise.resolve([]),
+        }),
+      }),
+    }));
+
+    const req = new Request("http://localhost/licenses/add", {
+      method: "POST",
+      body: JSON.stringify({
+        productId: "prod_123",
+        expirationDate: expirationDate.toISOString(),
+      }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { success: boolean; key: string };
+    expect(body.success).toBe(true);
+    expect(body.key).toBeDefined();
+    expect(mockInsert).toHaveBeenCalled();
+  });
+
+  test("POST /licenses/edit should update expirationDate", async () => {
+    const currentLicense = {
+      key: "lic_123",
+      productId: "prod_123",
+      tier: null,
+      expirationDate: null,
+      createdAt: new Date(),
+    };
+
+    mockSelect.mockImplementation(() => ({
+      from: () => ({
+        where: () => ({ limit: () => Promise.resolve([currentLicense]) }),
+        limit: () => ({ offset: () => Promise.resolve([]) }),
+      }),
+    }));
+
+    const newExpiration = new Date("2025-12-31T23:59:59Z");
+    const req = new Request("http://localhost/licenses/edit", {
+      method: "POST",
+      body: JSON.stringify({
+        key: "lic_123",
+        expirationDate: newExpiration.toISOString(),
+      }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { success: boolean };
+    expect(body.success).toBe(true);
+    expect(mockUpdate).toHaveBeenCalled();
+  });
+
+  test("POST /licenses/edit should clear tier when set to empty string", async () => {
+    const currentLicense = {
+      key: "lic_123",
+      productId: "prod_123",
+      tier: "basic",
+      expirationDate: null,
+      createdAt: new Date(),
+    };
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({ limit: () => Promise.resolve([currentLicense]) }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                { id: "prod_123", name: "Product", availableTiers: null },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    const req = new Request("http://localhost/licenses/edit", {
+      method: "POST",
+      body: JSON.stringify({ key: "lic_123", tier: "" }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { success: boolean };
+    expect(body.success).toBe(true);
+    expect(mockUpdate).toHaveBeenCalled();
   });
 });
 
