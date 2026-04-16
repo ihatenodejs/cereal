@@ -45,6 +45,11 @@ export const swaggerSpec = {
         "Binary and zip file management. Admins upload files via Bearer auth; licensed users access files using their license key.",
     },
     {
+      name: "Git Downloads",
+      description:
+        "GitHub repository-based downloads. Clone files from GitHub repos and track sync history. Requires authentication.",
+    },
+    {
       name: "Documentation",
       description: "API documentation and OpenAPI specification endpoints",
     },
@@ -674,6 +679,7 @@ export const swaggerSpec = {
                     "Missing productId",
                     "Product 'myapp' requires a tier. Available tiers: starter, pro, enterprise",
                     "Invalid tier 'premium' for product 'myapp'. Available tiers: starter, pro, enterprise",
+                    "Product 'myapp' does not support tiers",
                   ],
                 },
               },
@@ -837,6 +843,7 @@ export const swaggerSpec = {
                     "Missing key",
                     "Product 'myapp' requires a tier. Available tiers: starter, pro",
                     "Invalid tier 'premium' for product 'myapp'. Available tiers: starter, pro",
+                    "Product 'myapp' does not support tiers",
                   ],
                 },
               },
@@ -1211,6 +1218,25 @@ export const swaggerSpec = {
                       expirationDate: "2024-12-31T23:59:59Z",
                     },
                   },
+                  "License product missing": {
+                    value: {
+                      valid: false,
+                      reason: "License product not found",
+                    },
+                  },
+                  "License tier mismatch": {
+                    value: {
+                      valid: false,
+                      reason: "License tier is invalid for product",
+                    },
+                  },
+                  "Untiered product with tiered license": {
+                    value: {
+                      valid: false,
+                      reason:
+                        "License has tier but product does not support tiers",
+                    },
+                  },
                 },
               },
             },
@@ -1473,6 +1499,8 @@ export const swaggerSpec = {
             content: {
               "application/json": {
                 schema: {
+                  description:
+                    "For regular uploads, version is the uploaded release version (e.g. 1.2.0). For Git downloads, displayVersion is the first 8 characters of commitSha.",
                   type: "array",
                   items: {
                     type: "object",
@@ -1484,6 +1512,17 @@ export const swaggerSpec = {
                       },
                       productId: { type: "string", example: "myapp" },
                       version: { type: "string", example: "1.2.0" },
+                      displayVersion: {
+                        type: "string",
+                        description:
+                          "Short display identifier for Git downloads (first 8 chars of commitSha)",
+                        example: "a1b2c3d4",
+                      },
+                      commitSha: {
+                        type: "string",
+                        description: "Full Git commit SHA (Git downloads only)",
+                        example: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8g9h0",
+                      },
                       filename: {
                         type: "string",
                         example: "myapp-1.2.0-linux-amd64.zip",
@@ -1498,13 +1537,19 @@ export const swaggerSpec = {
                         format: "date-time",
                         example: "2024-01-01T00:00:00.000Z",
                       },
+                      github: {
+                        type: "boolean",
+                        description:
+                          "Whether this entry is Git-based (true) or a regular upload (false)",
+                        example: false,
+                      },
                     },
                     required: [
                       "id",
                       "productId",
-                      "version",
                       "filename",
                       "sha256",
+                      "github",
                       "createdAt",
                     ],
                   },
@@ -1554,6 +1599,8 @@ export const swaggerSpec = {
             content: {
               "application/json": {
                 schema: {
+                  description:
+                    "For regular uploads, version is the uploaded release version (e.g. 1.2.0). For Git downloads, displayVersion is the first 8 characters of commitSha.",
                   type: "array",
                   items: {
                     type: "object",
@@ -1564,6 +1611,17 @@ export const swaggerSpec = {
                         example: "550e8400-e29b-41d4-a716-446655440000",
                       },
                       version: { type: "string", example: "1.2.0" },
+                      displayVersion: {
+                        type: "string",
+                        description:
+                          "Short display identifier for Git downloads (first 8 chars of commitSha)",
+                        example: "a1b2c3d4",
+                      },
+                      commitSha: {
+                        type: "string",
+                        description: "Full Git commit SHA (Git downloads only)",
+                        example: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8g9h0",
+                      },
                       filename: {
                         type: "string",
                         example: "myapp-1.2.0-linux-amd64.zip",
@@ -1585,13 +1643,19 @@ export const swaggerSpec = {
                         format: "date-time",
                         example: "2024-01-01T00:00:00.000Z",
                       },
+                      github: {
+                        type: "boolean",
+                        description:
+                          "Whether this entry is Git-based (true) or a regular upload (false)",
+                        example: false,
+                      },
                     },
                     required: [
                       "id",
-                      "version",
                       "filename",
                       "url",
                       "sha256",
+                      "github",
                       "createdAt",
                     ],
                   },
@@ -1739,6 +1803,357 @@ export const swaggerSpec = {
             content: {
               "text/plain": {
                 schema: { type: "string", example: "Method Not Allowed" },
+              },
+            },
+          },
+          "500": {
+            description: "Internal server error",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Internal Server Error" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/downloads/git/add": {
+      post: {
+        summary: "Add a Git download from GitHub",
+        description:
+          "Clone a file from a GitHub repository and track it for updates. The repository is cloned shallowly and the specified file is extracted. Requires GITHUB_TOKEN environment variable for private repositories.",
+        operationId: "addGitDownload",
+        tags: ["Git Downloads"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["productId", "repoUrl", "filePath"],
+                properties: {
+                  productId: {
+                    type: "string",
+                    description:
+                      "Product identifier to associate with this download",
+                    example: "myapp",
+                  },
+                  repoUrl: {
+                    type: "string",
+                    description:
+                      "GitHub repository URL (e.g., https://github.com/owner/repo)",
+                    example: "https://github.com/owner/repo",
+                  },
+                  filePath: {
+                    type: "string",
+                    description:
+                      "Path to the file within the repository (relative to repo root)",
+                    example: "dist/app-1.0.0.zip",
+                  },
+                  branch: {
+                    type: "string",
+                    description: "Branch toclone from (defaults to 'main')",
+                    default: "main",
+                    example: "main",
+                  },
+                },
+              },
+              example: {
+                productId: "myapp",
+                repoUrl: "https://github.com/owner/repo",
+                filePath: "dist/app-1.0.0.zip",
+                branch: "main",
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Git download created successfully",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    id: {
+                      type: "string",
+                      format: "uuid",
+                      description: "Unique identifier for this git download",
+                      example: "550e8400-e29b-41d4-a716-446655440000",
+                    },
+                    commitSha: {
+                      type: "string",
+                      description: "Current commit SHA",
+                      example: "a1b2c3d4e5f6...",
+                    },
+                    sha256: {
+                      type: "string",
+                      description: "SHA256 checksum of the extracted file",
+                      example:
+                        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    },
+                  },
+                  required: ["success", "id", "commitSha", "sha256"],
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Missing required fields or clone failed",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  examples: [
+                    "Missing productId",
+                    "Missing repoUrl",
+                    "Missing filePath",
+                    "Clone failed: ...",
+                  ],
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized - Invalid or missing API key",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Unauthorized" },
+              },
+            },
+          },
+          "403": {
+            description: "Authentication failed for private repository",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  example:
+                    "Authentication failed. Check GITHUB_TOKEN for private repos.",
+                },
+              },
+            },
+          },
+          "404": {
+            description: "Product or file not found",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  examples: [
+                    "Product 'myapp' not found",
+                    "File not found in repository: dist/app.zip",
+                  ],
+                },
+              },
+            },
+          },
+          "500": {
+            description: "Internal server error",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Internal Server Error" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/downloads/git/refresh": {
+      post: {
+        summary: "Refresh a Git download",
+        description:
+          "Pull the latest changes from the GitHub repository and update the tracked file. Logs the sync result in git_sync_history.",
+        operationId: "refreshGitDownload",
+        tags: ["Git Downloads"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["id"],
+                properties: {
+                  id: {
+                    type: "string",
+                    format: "uuid",
+                    description: "Git download ID to refresh",
+                    example: "550e8400-e29b-41d4-a716-446655440000",
+                  },
+                },
+              },
+              example: { id: "550e8400-e29b-41d4-a716-446655440000" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Git download refreshed successfully",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    id: {
+                      type: "string",
+                      example: "550e8400-e29b-41d4-a716-446655440000",
+                    },
+                    commitSha: {
+                      type: "string",
+                      description: "New commit SHA after refresh",
+                      example: "a1b2c3d4e5f6...",
+                    },
+                    sha256: {
+                      type: "string",
+                      description: "SHA256 checksum of the updated file",
+                      example:
+                        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    },
+                    changed: {
+                      type: "boolean",
+                      description: "Whether the file changed since last sync",
+                      example: true,
+                    },
+                  },
+                  required: ["success", "id", "commitSha", "sha256", "changed"],
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Missing id or refresh failed",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  examples: ["Missing id", "Fetch failed: ..."],
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized - Invalid or missing API key",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Unauthorized" },
+              },
+            },
+          },
+          "404": {
+            description: "Git download not found",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  example: "Git download '550e8400-...' not found",
+                },
+              },
+            },
+          },
+          "500": {
+            description: "Internal server error",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Internal Server Error" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/downloads/git/history": {
+      get: {
+        summary: "Get sync history for a Git download",
+        description:
+          "Retrieve the sync history for a specific Git download, including both successful and failed sync attempts.",
+        operationId: "getGitDownloadHistory",
+        tags: ["Git Downloads"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "query",
+            required: true,
+            description: "Git download ID",
+            schema: { type: "string", format: "uuid" },
+            example: "550e8400-e29b-41d4-a716-446655440000",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "List of sync history entries",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: {
+                        type: "string",
+                        format: "uuid",
+                        example: "660e8400-e29b-41d4-a716-446655440001",
+                      },
+                      status: {
+                        type: "string",
+                        enum: ["success", "failed"],
+                        example: "success",
+                      },
+                      errorMessage: {
+                        type: "string",
+                        nullable: true,
+                        example: null,
+                      },
+                      previousCommitSha: {
+                        type: "string",
+                        nullable: true,
+                        example: "a1b2c3d4e5f6...",
+                      },
+                      newCommitSha: {
+                        type: "string",
+                        nullable: true,
+                        example: "b2c3d4e5f6g7...",
+                      },
+                      syncedAt: {
+                        type: "string",
+                        format: "date-time",
+                        example: "2024-01-15T10:30:00Z",
+                      },
+                    },
+                    required: ["id", "status", "syncedAt"],
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Missing id parameter",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Missing id" },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized - Invalid or missing API key",
+            content: {
+              "text/plain": {
+                schema: { type: "string", example: "Unauthorized" },
+              },
+            },
+          },
+          "404": {
+            description: "Git download not found",
+            content: {
+              "text/plain": {
+                schema: {
+                  type: "string",
+                  example: "Git download '550e8400-...' not found",
+                },
               },
             },
           },
@@ -1905,7 +2320,7 @@ export const swaggerSpec = {
           },
           version: {
             type: "string",
-            description: "Version tag",
+            description: "Version tag (for regular downloads)",
             example: "1.2.0",
           },
           filename: {
@@ -1919,6 +2334,12 @@ export const swaggerSpec = {
             example:
               "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           },
+          github: {
+            type: "boolean",
+            description:
+              "Whether this is a Git-based download (true) or regular upload (false)",
+            example: false,
+          },
           createdAt: {
             type: "string",
             format: "date-time",
@@ -1929,11 +2350,123 @@ export const swaggerSpec = {
         required: [
           "id",
           "productId",
-          "version",
           "filename",
           "sha256",
+          "github",
           "createdAt",
         ],
+      },
+      GitDownload: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            format: "uuid",
+            description: "Unique git download identifier",
+            example: "550e8400-e29b-41d4-a716-446655440000",
+          },
+          productId: {
+            type: "string",
+            description: "Associated product identifier",
+            example: "myapp",
+          },
+          repoUrl: {
+            type: "string",
+            description: "GitHub repository URL",
+            example: "https://github.com/owner/repo",
+          },
+          filePath: {
+            type: "string",
+            description: "Path to file within repository",
+            example: "dist/app-1.0.0.zip",
+          },
+          branch: {
+            type: "string",
+            description: "Branch name",
+            example: "main",
+          },
+          commitSha: {
+            type: "string",
+            description: "Current commit SHA",
+            example: "a1b2c3d4e5f6...",
+          },
+          filename: {
+            type: "string",
+            description: "Extracted filename",
+            example: "app-1.0.0.zip",
+          },
+          sha256: {
+            type: "string",
+            description: "SHA256 checksum of the file",
+            example:
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          },
+          lastSyncAt: {
+            type: "string",
+            format: "date-time",
+            description: "Timestamp of last successful sync",
+            example: "2024-01-15T10:30:00Z",
+          },
+          createdAt: {
+            type: "string",
+            format: "date-time",
+            description: "Timestamp when the entry was created",
+            example: "2024-01-15T10:30:00Z",
+          },
+        },
+        required: [
+          "id",
+          "productId",
+          "repoUrl",
+          "filePath",
+          "branch",
+          "commitSha",
+          "filename",
+          "sha256",
+          "lastSyncAt",
+          "createdAt",
+        ],
+      },
+      GitSyncHistory: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            format: "uuid",
+            example: "660e8400-e29b-41d4-a716-446655440001",
+          },
+          status: {
+            type: "string",
+            enum: ["success", "failed"],
+            description: "Sync status",
+            example: "success",
+          },
+          errorMessage: {
+            type: "string",
+            nullable: true,
+            description: "Error message if sync failed",
+            example: null,
+          },
+          previousCommitSha: {
+            type: "string",
+            nullable: true,
+            description: "Commit SHA before sync",
+            example: "a1b2c3d4e5f6...",
+          },
+          newCommitSha: {
+            type: "string",
+            nullable: true,
+            description: "Commit SHA after sync",
+            example: "b2c3d4e5f6g7...",
+          },
+          syncedAt: {
+            type: "string",
+            format: "date-time",
+            description: "Timestamp of sync attempt",
+            example: "2024-01-15T10:30:00Z",
+          },
+        },
+        required: ["id", "status", "syncedAt"],
       },
     },
   },

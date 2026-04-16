@@ -544,16 +544,34 @@ describe("License Validation Endpoint", () => {
       createdAt: new Date("2025-02-10T12:00:00Z"),
     };
 
-    mockSelect.mockImplementation(() => ({
-      from: () => ({
-        where: () => ({
-          limit: () => Promise.resolve([license]),
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([license]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
         }),
-        limit: () => ({
-          offset: () => Promise.resolve([]),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "am-max",
+                  name: "AM Max",
+                  availableTiers: ["max", "pro"],
+                },
+              ]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
         }),
-      }),
-    }));
+      }));
 
     const req = new Request("http://localhost/licenses/validate", {
       method: "POST",
@@ -589,16 +607,34 @@ describe("License Validation Endpoint", () => {
       createdAt: new Date("2025-02-10T12:00:00Z"),
     };
 
-    mockSelect.mockImplementation(() => ({
-      from: () => ({
-        where: () => ({
-          limit: () => Promise.resolve([license]),
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([license]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
         }),
-        limit: () => ({
-          offset: () => Promise.resolve([]),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "am-basic",
+                  name: "AM Basic",
+                  availableTiers: null,
+                },
+              ]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
         }),
-      }),
-    }));
+      }));
 
     const req = new Request("http://localhost/licenses/validate", {
       method: "POST",
@@ -631,16 +667,34 @@ describe("License Validation Endpoint", () => {
       createdAt: new Date("2025-02-10T12:00:00Z"),
     };
 
-    mockSelect.mockImplementation(() => ({
-      from: () => ({
-        where: () => ({
-          limit: () => Promise.resolve([license]),
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([license]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
         }),
-        limit: () => ({
-          offset: () => Promise.resolve([]),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "am-max",
+                  name: "AM Max",
+                  availableTiers: ["max", "pro"],
+                },
+              ]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
         }),
-      }),
-    }));
+      }));
 
     const req = new Request("http://localhost/licenses/validate", {
       method: "POST",
@@ -730,6 +784,154 @@ describe("License Validation Endpoint", () => {
     expect(body.expirationDate).toBeDefined();
   });
 
+  test("POST /licenses/validate should return invalid when product is missing", async () => {
+    const license = {
+      key: "550e8400-e29b-41d4-a716-446655440000",
+      productId: "missing-product",
+      tier: "pro",
+      expirationDate: null,
+      createdAt: new Date("2025-02-10T12:00:00Z"),
+    };
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([license]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
+        }),
+      }));
+
+    const req = new Request("http://localhost/licenses/validate", {
+      method: "POST",
+      body: JSON.stringify({ key: license.key }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    const body = (await res.json()) as { valid: boolean; reason: string };
+
+    expect(res.status).toBe(200);
+    expect(body.valid).toBe(false);
+    expect(body.reason).toBe("License product not found");
+  });
+
+  test("POST /licenses/validate should return invalid for tier mismatch", async () => {
+    const license = {
+      key: "550e8400-e29b-41d4-a716-446655440000",
+      productId: "am-max",
+      tier: "enterprise",
+      expirationDate: null,
+      createdAt: new Date("2025-02-10T12:00:00Z"),
+    };
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([license]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "am-max",
+                  name: "AM Max",
+                  availableTiers: ["starter", "pro"],
+                },
+              ]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
+        }),
+      }));
+
+    const req = new Request("http://localhost/licenses/validate", {
+      method: "POST",
+      body: JSON.stringify({ key: license.key }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    const body = (await res.json()) as { valid: boolean; reason: string };
+
+    expect(res.status).toBe(200);
+    expect(body.valid).toBe(false);
+    expect(body.reason).toBe("License tier is invalid for product");
+  });
+
+  test("POST /licenses/validate should return invalid when untiered product has tiered license", async () => {
+    const license = {
+      key: "550e8400-e29b-41d4-a716-446655440000",
+      productId: "am-basic",
+      tier: "pro",
+      expirationDate: null,
+      createdAt: new Date("2025-02-10T12:00:00Z"),
+    };
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([license]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "am-basic",
+                  name: "AM Basic",
+                  availableTiers: null,
+                },
+              ]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
+        }),
+      }));
+
+    const req = new Request("http://localhost/licenses/validate", {
+      method: "POST",
+      body: JSON.stringify({ key: license.key }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    const body = (await res.json()) as { valid: boolean; reason: string };
+
+    expect(res.status).toBe(200);
+    expect(body.valid).toBe(false);
+    expect(body.reason).toBe(
+      "License has tier but product does not support tiers",
+    );
+  });
+
   test("POST /licenses/validate should return 400 for missing key", async () => {
     const req = new Request("http://localhost/licenses/validate", {
       method: "POST",
@@ -788,7 +990,7 @@ describe("License Tier Validation", () => {
     expect(text).toContain("starter, pro, enterprise");
   });
 
-  test("POST /licenses/add should allow tier for product without availableTiers", async () => {
+  test("POST /licenses/add should create license for product without availableTiers", async () => {
     mockSelect.mockImplementation(() => ({
       from: () => ({
         where: () => ({
@@ -846,6 +1048,37 @@ describe("License Tier Validation", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { success: boolean; key: string };
     expect(body.success).toBe(true);
+  });
+
+  test("POST /licenses/add should reject tier for product without availableTiers", async () => {
+    mockSelect.mockImplementation(() => ({
+      from: () => ({
+        where: () => ({
+          limit: () =>
+            Promise.resolve([
+              {
+                id: "prod_simple",
+                name: "Simple Product",
+                availableTiers: null,
+              },
+            ]),
+        }),
+        limit: () => ({
+          offset: () => Promise.resolve([]),
+        }),
+      }),
+    }));
+
+    const req = new Request("http://localhost/licenses/add", {
+      method: "POST",
+      body: JSON.stringify({ productId: "prod_simple", tier: "pro" }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe(
+      "Product 'prod_simple' does not support tiers",
+    );
   });
 
   test("POST /licenses/add should return 404 for non-existent product", async () => {
@@ -918,7 +1151,7 @@ describe("License Tier Validation", () => {
     expect(await res.text()).toContain("requires a tier");
   });
 
-  test("POST /licenses/edit should allow changing to product without tiers", async () => {
+  test("POST /licenses/edit should allow changing to product without tiers when clearing tier", async () => {
     const currentLicense = {
       key: "lic_123",
       productId: "prod_old",
@@ -958,11 +1191,63 @@ describe("License Tier Validation", () => {
 
     const req = new Request("http://localhost/licenses/edit", {
       method: "POST",
-      body: JSON.stringify({ key: "lic_123", productId: "prod_new" }),
+      body: JSON.stringify({ key: "lic_123", productId: "prod_new", tier: "" }),
     });
 
     const res = await handleLicensesRequest(req);
     expect(res.status).toBe(200);
+  });
+
+  test("POST /licenses/edit should reject setting tier on product without availableTiers", async () => {
+    const currentLicense = {
+      key: "lic_123",
+      productId: "prod_old",
+      tier: null,
+      expirationDate: null,
+      createdAt: new Date(),
+    };
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([currentLicense]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "prod_new",
+                  name: "New Product",
+                  availableTiers: null,
+                },
+              ]),
+          }),
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
+        }),
+      }));
+
+    const req = new Request("http://localhost/licenses/edit", {
+      method: "POST",
+      body: JSON.stringify({
+        key: "lic_123",
+        productId: "prod_new",
+        tier: "pro",
+      }),
+    });
+
+    const res = await handleLicensesRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Product 'prod_new' does not support tiers");
   });
 
   test("POST /licenses/edit should validate tier when changing both productId and tier", async () => {

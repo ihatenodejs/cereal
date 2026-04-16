@@ -6,6 +6,7 @@
 
 - Product/application registration and management
 - License key generation and lifecycle management
+- Download distribution for licensed users (uploaded files and Git-based files)
 - API key authentication for secure access
 - OpenAPI/Swagger documentation
 
@@ -18,6 +19,9 @@
 - `licenses` - License keys linked to products with optional expiration
   - Includes optional `tier` field (required if product has availableTiers)
 - `api_keys` - API keys for authenticating requests
+- `downloads` - Uploaded release files (versioned binaries/archives per product)
+- `git_downloads` - Git-backed downloadable files tracked by repo/branch/path
+- `git_sync_history` - Sync audit history for Git download refresh operations
 
 ## Available API Routes
 
@@ -27,6 +31,8 @@
 - `GET /health` - Health check with server uptime and version
 - `GET /swagger` - Swagger UI documentation
 - `GET /swagger.json` - OpenAPI specification
+- `GET /swagger-init.js` - Swagger UI initialization script
+- `GET /swagger-ui-assets/*` - Swagger static assets
 
 ### Products (Authenticated)
 
@@ -43,6 +49,20 @@
 - `GET /licenses/list` - List all licenses with pagination
 - `POST /licenses/validate` - Validate a license key (PUBLIC - no auth required)
 
+### Downloads
+
+- `GET /downloads/files` - List downloadable files for a license (PUBLIC - requires `licenseKey` query param)
+- `GET /downloads/get/:id` - Download a specific file by ID (PUBLIC - requires `licenseKey` query param; optional `plaintext=true`)
+- `GET /downloads/list` - List all download entries with pagination (authenticated)
+- `POST /downloads/upload` - Upload a release file (authenticated, `multipart/form-data` with `productId`, `version`, `file`)
+- `POST /downloads/delete` - Delete a download entry (authenticated, requires `id`)
+
+### Git Downloads (Authenticated)
+
+- `POST /downloads/git/add` - Add a Git-based downloadable file (requires `productId`, `repoUrl`, `filePath`, optional `branch`)
+- `POST /downloads/git/refresh` - Sync a tracked Git file to latest commit (requires `id`)
+- `GET /downloads/git/history` - Get sync history for a Git download (requires `id` query param)
+
 **Authentication**: All authenticated routes require `Authorization: Bearer <api-key>` header
 
 ## Project Structure
@@ -53,12 +73,13 @@ src/
 ├── db/             # Database connection and Drizzle schema definitions
 ├── db-data/        # Persistent database data (mounted to Docker volume)
 ├── middleware/     # Authentication and other middleware
-├── routes/         # API route handlers (one file per resource)
+├── routes/         # API route handlers (products, licenses, downloads, docs)
+├── utils/          # Utility modules (e.g., git clone/sync helpers)
 └── templates/      # HTML/JS templates for Swagger UI
 
 index.ts            # Main server entry point with route registration
 swagger.ts          # OpenAPI specification
-scripts/            # Utility scripts (API key creation, testing)
+scripts/            # Utility scripts (e.g., API key creation)
 ```
 
 ## Creating New API Routes
@@ -159,6 +180,7 @@ POSTGRES_DB=cereal         # Database name
 # Server configuration
 PORT=3000                  # Server port (default: 3000)
 NODE_ENV=production        # Environment: development | production
+UPLOADS_DIR=./uploads      # Optional downloads storage directory
 
 # Full connection string (automatically constructed if not set)
 POSTGRES_URL=postgres://user:pass@localhost:5432/cereal
@@ -212,6 +234,7 @@ See `src/middleware/auth.ts` for implementation details.
 bun start              # Run production server
 bun run dev            # Run with watch mode (auto-restart)
 bun run index.ts       # Run directly
+bun run typecheck      # Type-check TypeScript without emitting files
 ```
 
 ### Code Quality

@@ -1,6 +1,9 @@
+import figlet from "figlet";
+
 import packageJson from "./package.json";
 import { config } from "./src/config/server.ts";
 import { handleDownloadsRequest } from "./src/routes/downloads.ts";
+import { handleGitDownloadsRequest } from "./src/routes/git-downloads.ts";
 import { handleRoot, handleHealth } from "./src/routes/health.ts";
 import { handleLicensesRequest } from "./src/routes/licenses.ts";
 import { handleProductsRequest } from "./src/routes/products.ts";
@@ -31,6 +34,11 @@ const server = Bun.serve({
       return handleLicensesRequest(req);
     }
 
+    // Git download endpoints (must come before general downloads)
+    if (url.pathname.startsWith("/downloads/git")) {
+      return handleGitDownloadsRequest(req);
+    }
+
     // Downloads endpoints
     if (url.pathname.startsWith("/downloads")) {
       return handleDownloadsRequest(req);
@@ -48,6 +56,7 @@ const server = Bun.serve({
   development: config.isDevelopment,
 });
 
-console.log(`Cereal v${packageJson.version}`);
-console.log(`${"=".repeat(packageJson.version.length + 8)}\n`);
+const banner = figlet.textSync("Cereal");
+console.log(banner);
+console.log(`Version ${packageJson.version}\n`);
 console.log(`Listening on http://localhost:${server.port}`);

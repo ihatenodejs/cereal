@@ -44,3 +44,31 @@ export const downloads = pgTable(
     ),
   ],
 );
+
+export const gitDownloads = pgTable("git_downloads", {
+  id: text("id").primaryKey(),
+  productId: text("product_id")
+    .references(() => applications.id)
+    .notNull(),
+  repoUrl: text("repo_url").notNull(),
+  filePath: text("file_path").notNull(),
+  branch: text("branch").notNull().default("main"),
+  commitSha: text("commit_sha").notNull(),
+  localPath: text("local_path").notNull(),
+  filename: text("filename").notNull(),
+  sha256: text("sha256").notNull(),
+  lastSyncAt: timestamp("last_sync_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const gitSyncHistory = pgTable("git_sync_history", {
+  id: text("id").primaryKey(),
+  gitDownloadId: text("git_download_id")
+    .references(() => gitDownloads.id)
+    .notNull(),
+  status: text("status").notNull(),
+  errorMessage: text("error_message"),
+  previousCommitSha: text("previous_commit_sha"),
+  newCommitSha: text("new_commit_sha"),
+  syncedAt: timestamp("synced_at").defaultNow().notNull(),
+});

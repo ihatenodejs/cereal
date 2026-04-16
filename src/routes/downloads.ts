@@ -1,17 +1,39 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import { and, eq } from "drizzle-orm";
 
+import {
+  deleteGitDownload,
+  getGitDownloadById,
+  listAllGitDownloads,
+  listGitDownloadsByProductId,
+} from "./git-downloads.ts";
 import { db } from "../db/index.ts";
 import { applications, downloads, licenses } from "../db/schema.ts";
 import { authenticate } from "../middleware/auth.ts";
 
 const UPLOADS_DIR = process.env["UPLOADS_DIR"] ?? "./uploads";
 
+function toShortCommitSha(commitSha: string): string {
+  return commitSha.slice(0, 8);
+}
+
 function getFilePath(productId: string, version: string, filename: string) {
   return join(UPLOADS_DIR, productId, version, filename);
+}
+
+function getGitDiskFilePath(localPath: string, filePath: string): string {
+  if (isAbsolute(filePath)) {
+    return filePath;
+  }
+
+  if (filePath.startsWith(`${localPath}/`) || filePath === localPath) {
+    return filePath;
+  }
+
+  return join(localPath, filePath);
 }
 
 async function validateLicenseKey(
@@ -68,22 +90,39 @@ export async function handleDownloadsRequest(req: Request): Promise<Response> {
         return result.response;
       }
 
-      const files = await db
-        .select()
-        .from(downloads)
-        .where(eq(downloads.productId, result.productId));
+      const [regularFiles, gitFiles] = await Promise.all([
+        db
+          .select()
+          .from(downloads)
+          .where(eq(downloads.productId, result.productId)),
+        listGitDownloadsByProductId(result.productId),
+      ]);
 
       const baseUrl = `${url.protocol}//${url.host}`;
-      const fileList = files.map((file) => ({
+
+      const regularFileList = regularFiles.map((file) => ({
         id: file.id,
         version: file.version,
         filename: file.filename,
         url: `${baseUrl}/downloads/get/${file.id}?licenseKey=${encodeURIComponent(licenseKey)}`,
         sha256: file.sha256,
+        github: false,
         createdAt: file.createdAt,
       }));
 
-      return Response.json(fileList);
+      const gitFileList = gitFiles.map((file) => ({
+        id: file.id,
+        displayVersion: toShortCommitSha(file.commitSha),
+        commitSha: file.commitSha,
+        filename: file.filename,
+        url: `${baseUrl}/downloads/get/${file.id}?licenseKey=${encodeURIComponent(licenseKey)}`,
+        sha256: file.sha256,
+        github: true,
+        lastSyncAt: file.lastSyncAt,
+        createdAt: file.createdAt,
+      }));
+
+      return Response.json([...regularFileList, ...gitFileList]);
     } catch (error) {
       console.error("Downloads files error:", error);
       return new Response("Internal Server Error", { status: 500 });
@@ -109,7 +148,8 @@ export async function handleDownloadsRequest(req: Request): Promise<Response> {
         return licenseResult.response;
       }
 
-      const [file] = await db
+      // Check regular downloads first
+      const [regularFile] = await db
         .select()
         .from(downloads)
         .where(
@@ -120,11 +160,48 @@ export async function handleDownloadsRequest(req: Request): Promise<Response> {
         )
         .limit(1);
 
-      if (!file) {
+      let regularFileMissingOnDisk = false;
+
+      if (regularFile) {
+        const bunFile = Bun.file(regularFile.filePath);
+        if (await bunFile.exists()) {
+          const plaintext = url.searchParams.get("plaintext");
+          if (plaintext === "true") {
+            const content = await bunFile.text();
+            return new Response(content, {
+              headers: {
+                "Content-Type": "text/plain; charset=utf-8",
+                "Content-Disposition": `inline; filename="${regularFile.filename}"`,
+                "X-SHA256": regularFile.sha256,
+              },
+            });
+          }
+
+          return new Response(bunFile, {
+            headers: {
+              "Content-Disposition": `attachment; filename="${regularFile.filename}"`,
+              "X-SHA256": regularFile.sha256,
+            },
+          });
+        }
+
+        regularFileMissingOnDisk = true;
+      }
+
+      // Check git downloads
+      const gitFile = await getGitDownloadById(fileId);
+      if (!gitFile || gitFile.productId !== licenseResult.productId) {
+        if (regularFileMissingOnDisk) {
+          return new Response("File not found on disk", { status: 404 });
+        }
         return new Response("File not found", { status: 404 });
       }
 
-      const bunFile = Bun.file(file.filePath);
+      const gitDiskFilePath = getGitDiskFilePath(
+        gitFile.localPath,
+        gitFile.filePath,
+      );
+      const bunFile = Bun.file(gitDiskFilePath);
       if (!(await bunFile.exists())) {
         return new Response("File not found on disk", { status: 404 });
       }
@@ -135,16 +212,16 @@ export async function handleDownloadsRequest(req: Request): Promise<Response> {
         return new Response(content, {
           headers: {
             "Content-Type": "text/plain; charset=utf-8",
-            "Content-Disposition": `inline; filename="${file.filename}"`,
-            "X-SHA256": file.sha256,
+            "Content-Disposition": `inline; filename="${gitFile.filename}"`,
+            "X-SHA256": gitFile.sha256,
           },
         });
       }
 
       return new Response(bunFile, {
         headers: {
-          "Content-Disposition": `attachment; filename="${file.filename}"`,
-          "X-SHA256": file.sha256,
+          "Content-Disposition": `attachment; filename="${gitFile.filename}"`,
+          "X-SHA256": gitFile.sha256,
         },
       });
     } catch (error) {
@@ -158,28 +235,48 @@ export async function handleDownloadsRequest(req: Request): Promise<Response> {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  // ── Admin: list all uploads ──────────────────────────────────────────────
+  // ── Admin: list all uploads (regular + git) ──────────────────────────────
   if (req.method === "GET" && url.pathname === "/downloads/list") {
     const limit = Number(url.searchParams.get("limit")) || 10;
     const page = Number(url.searchParams.get("page")) || 1;
     const offset = (page - 1) * limit;
 
-    const fileList = await db
-      .select()
-      .from(downloads)
-      .limit(Math.min(limit, 100))
-      .offset(offset);
+    try {
+      const [regularFiles, gitFiles] = await Promise.all([
+        db.select().from(downloads).limit(Math.min(limit, 100)).offset(offset),
+        listAllGitDownloads(Math.min(limit, 100), offset),
+      ]);
 
-    return Response.json(
-      fileList.map((f) => ({
+      const regularFileList = regularFiles.map((f) => ({
         id: f.id,
         productId: f.productId,
         version: f.version,
         filename: f.filename,
         sha256: f.sha256,
+        github: false,
         createdAt: f.createdAt,
-      })),
-    );
+      }));
+
+      const gitFileList = gitFiles.map((f) => ({
+        id: f.id,
+        productId: f.productId,
+        displayVersion: toShortCommitSha(f.commitSha),
+        commitSha: f.commitSha,
+        repoUrl: f.repoUrl,
+        filePath: f.filePath,
+        branch: f.branch,
+        filename: f.filename,
+        sha256: f.sha256,
+        github: true,
+        lastSyncAt: f.lastSyncAt,
+        createdAt: f.createdAt,
+      }));
+
+      return Response.json([...regularFileList, ...gitFileList]);
+    } catch (error) {
+      console.error("Downloads list error:", error);
+      return new Response("Internal Server Error", { status: 500 });
+    }
   }
 
   // ── Admin: upload a file ─────────────────────────────────────────────────
@@ -207,13 +304,13 @@ export async function handleDownloadsRequest(req: Request): Promise<Response> {
         return new Response("Missing file", { status: 400 });
       }
 
-      const [product] = await db
+      const [app] = await db
         .select()
         .from(applications)
         .where(eq(applications.id, productId))
         .limit(1);
 
-      if (!product) {
+      if (!app) {
         return new Response(`Product '${productId}' not found`, {
           status: 404,
         });
@@ -260,21 +357,31 @@ export async function handleDownloadsRequest(req: Request): Promise<Response> {
         });
       }
 
-      return Response.json({ success: true, id, sha256 });
+      return Response.json({ success: true, id, sha256, github: false });
     } catch (error) {
       console.error("Downloads upload error:", error);
       return new Response("Internal Server Error", { status: 500 });
     }
   }
 
-  // ── Admin: delete a file ─────────────────────────────────────────────────
+  // ── Admin: delete a file (regular or git) ────────────────────────────────
   if (req.method === "POST" && url.pathname === "/downloads/delete") {
     try {
-      const body = (await req.json()) as { id?: string };
-      const { id } = body;
+      const body = (await req.json()) as { id?: string; github?: boolean };
+      const { id, github } = body;
 
       if (!id) {
         return new Response("Missing id", { status: 400 });
+      }
+
+      if (github === true) {
+        const deleted = await deleteGitDownload(id);
+        if (!deleted) {
+          return new Response(`Git download '${id}' not found`, {
+            status: 404,
+          });
+        }
+        return Response.json({ success: true, id, github: true });
       }
 
       const [file] = await db
@@ -283,23 +390,27 @@ export async function handleDownloadsRequest(req: Request): Promise<Response> {
         .where(eq(downloads.id, id))
         .limit(1);
 
-      if (!file) {
+      if (file) {
+        try {
+          const fileExists = await Bun.file(file.filePath).exists();
+          if (fileExists) {
+            const { unlink } = await import("node:fs/promises");
+            await unlink(file.filePath);
+          }
+        } catch {
+          // Ignore filesystem errors
+        }
+
+        await db.delete(downloads).where(eq(downloads.id, id));
+        return Response.json({ success: true, id, github: false });
+      }
+
+      const deleted = await deleteGitDownload(id);
+      if (!deleted) {
         return new Response(`Download '${id}' not found`, { status: 404 });
       }
 
-      try {
-        const fileExists = await Bun.file(file.filePath).exists();
-        if (fileExists) {
-          const { unlink } = await import("node:fs/promises");
-          await unlink(file.filePath);
-        }
-      } catch {
-        // Ignore filesystem errors
-      }
-
-      await db.delete(downloads).where(eq(downloads.id, id));
-
-      return Response.json({ success: true, id });
+      return Response.json({ success: true, id, github: true });
     } catch (error) {
       console.error("Downloads delete error:", error);
       return new Response("Internal Server Error", { status: 500 });

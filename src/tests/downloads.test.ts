@@ -313,13 +313,21 @@ describe("Downloads Admin Endpoints", () => {
       },
     ];
 
-    mockSelect.mockImplementation(() => ({
-      from: () => ({
-        limit: () => ({
-          offset: () => Promise.resolve(files),
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          limit: () => ({
+            offset: () => Promise.resolve(files),
+          }),
         }),
-      }),
-    }));
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
+        }),
+      }));
 
     const req = new Request("http://localhost/downloads/list?limit=10&page=1");
     const res = await handleDownloadsRequest(req);
@@ -331,6 +339,69 @@ describe("Downloads Admin Endpoints", () => {
     for (const item of body) {
       expect(item as Record<string, unknown>).not.toHaveProperty("filePath");
     }
+  });
+
+  test("GET /downloads/list should include regular and git downloads", async () => {
+    const now = new Date("2024-03-01T00:00:00Z");
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          limit: () => ({
+            offset: () =>
+              Promise.resolve([
+                {
+                  id: "dl_regular",
+                  productId: "prod_1",
+                  version: "1.0.0",
+                  filename: "app.zip",
+                  filePath: "./uploads/prod_1/1.0.0/app.zip",
+                  sha256: "sha-regular",
+                  createdAt: now,
+                },
+              ]),
+          }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          limit: () => ({
+            offset: () =>
+              Promise.resolve([
+                {
+                  id: "dl_git",
+                  productId: "prod_1",
+                  repoUrl: "https://github.com/acme/repo",
+                  filePath: "dist/app.zip",
+                  branch: "main",
+                  commitSha: "abc123",
+                  localPath: "./git-downloads/dl_git",
+                  filename: "app.zip",
+                  sha256: "sha-git",
+                  lastSyncAt: now,
+                  createdAt: now,
+                },
+              ]),
+          }),
+        }),
+      }));
+
+    const req = new Request("http://localhost/downloads/list?limit=10&page=1");
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>[];
+    expect(body).toHaveLength(2);
+
+    const regular = body.find((item) => item["id"] === "dl_regular");
+    const git = body.find((item) => item["id"] === "dl_git");
+
+    expect(regular?.["github"]).toBe(false);
+    expect(git?.["github"]).toBe(true);
+    expect(git?.["version"]).toBeUndefined();
+    expect(git?.["displayVersion"]).toBe("abc123");
+    expect(git?.["commitSha"]).toBe("abc123");
+    expect(git?.["repoUrl"]).toBe("https://github.com/acme/repo");
   });
 });
 
@@ -381,6 +452,12 @@ describe("Downloads User Endpoints", () => {
           where: () => Promise.resolve(files),
           limit: () => ({ offset: () => Promise.resolve([]) }),
         }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => Promise.resolve([]),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
       }));
 
     const req = new Request(
@@ -400,10 +477,75 @@ describe("Downloads User Endpoints", () => {
     expect(body[0]!.version).toBe("1.0.0");
     expect(body[0]!.filename).toBe("app-1.0.0.zip");
     expect(body[0]!.sha256).toBe("abc123");
+    expect((body[0] as Record<string, unknown>)["github"]).toBe(false);
     expect(body[0]!.url).toContain("/downloads/get/dl_1");
     expect(body[0]!.url).toContain("licenseKey=valid-key-123");
     // filePath must not be exposed
     expect(body[0] as Record<string, unknown>).not.toHaveProperty("filePath");
+  });
+
+  test("GET /downloads/files should include git downloads", async () => {
+    const futureDate = new Date();
+    futureDate.setFullYear(futureDate.getFullYear() + 1);
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  key: "valid-git-files",
+                  productId: "prod_abc",
+                  expirationDate: futureDate,
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => Promise.resolve([]),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () =>
+            Promise.resolve([
+              {
+                id: "git_1",
+                productId: "prod_abc",
+                repoUrl: "https://github.com/acme/repo",
+                filePath: "dist/app.zip",
+                branch: "main",
+                commitSha: "deadbeef",
+                localPath: "./git-downloads/git_1",
+                filename: "app.zip",
+                sha256: "sha-git",
+                lastSyncAt: new Date("2024-01-02T00:00:00Z"),
+                createdAt: new Date("2024-01-01T00:00:00Z"),
+              },
+            ]),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    const req = new Request(
+      "http://localhost/downloads/files?licenseKey=valid-git-files",
+    );
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>[];
+    expect(body).toHaveLength(1);
+    expect(body[0]?.["id"]).toBe("git_1");
+    expect(body[0]?.["github"]).toBe(true);
+    expect(body[0]?.["version"]).toBeUndefined();
+    expect(body[0]?.["displayVersion"]).toBe("deadbeef");
+    expect(body[0]?.["commitSha"]).toBe("deadbeef");
+    expect((body[0] as Record<string, unknown>)["url"]).toBeDefined();
   });
 
   test("GET /downloads/files should return 403 for invalid license", async () => {
@@ -580,6 +722,14 @@ describe("Downloads User Endpoints", () => {
           }),
           limit: () => ({ offset: () => Promise.resolve([]) }),
         }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
       }));
 
     const req = new Request(
@@ -588,6 +738,304 @@ describe("Downloads User Endpoints", () => {
     const res = await handleDownloadsRequest(req);
 
     expect(res.status).toBe(404);
+  });
+
+  test("GET /downloads/get/:id should serve git download fallback", async () => {
+    const futureDate = new Date();
+    futureDate.setFullYear(futureDate.getFullYear() + 1);
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  key: "valid-git-download-key",
+                  productId: "prod_git",
+                  expirationDate: futureDate,
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "git_dl_1",
+                  productId: "prod_git",
+                  repoUrl: "https://github.com/acme/repo",
+                  filePath: "./git-downloads/git_dl_1/dist/release.zip",
+                  branch: "main",
+                  commitSha: "abc",
+                  localPath: "./git-downloads/git_dl_1",
+                  filename: "release.zip",
+                  sha256: "git-sha",
+                  lastSyncAt: new Date(),
+                  createdAt: new Date(),
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    (Bun as unknown as Record<string, unknown>).file = (_path: string) => ({
+      exists: () => Promise.resolve(true),
+      stream: () => new ReadableStream(),
+      type: "application/zip",
+      size: 128,
+    });
+
+    const req = new Request(
+      "http://localhost/downloads/get/git_dl_1?licenseKey=valid-git-download-key",
+    );
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Disposition")).toContain("release.zip");
+    expect(res.headers.get("X-SHA256")).toBe("git-sha");
+  });
+
+  test("GET /downloads/get/:id should serve git download when regular file is missing on disk", async () => {
+    const futureDate = new Date();
+    futureDate.setFullYear(futureDate.getFullYear() + 1);
+
+    const fileId = "shared_dl_1";
+    const regularPath = "./uploads/prod_git/1.0.0/release.zip";
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  key: "valid-git-fallback-key",
+                  productId: "prod_git",
+                  expirationDate: futureDate,
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: fileId,
+                  productId: "prod_git",
+                  version: "1.0.0",
+                  filename: "release.zip",
+                  filePath: regularPath,
+                  sha256: "regular-sha",
+                  createdAt: new Date(),
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: fileId,
+                  productId: "prod_git",
+                  repoUrl: "https://github.com/acme/repo",
+                  filePath: "dist/release.zip",
+                  branch: "main",
+                  commitSha: "abc",
+                  localPath: "./git-downloads/shared_dl_1",
+                  filename: "release.zip",
+                  sha256: "git-sha",
+                  lastSyncAt: new Date(),
+                  createdAt: new Date(),
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    (Bun as unknown as Record<string, unknown>).file = (path: string) => {
+      if (path === regularPath) {
+        return {
+          exists: () => Promise.resolve(false),
+        };
+      }
+
+      return {
+        exists: () => Promise.resolve(true),
+        stream: () => new ReadableStream(),
+        type: "application/zip",
+        size: 128,
+      };
+    };
+
+    const req = new Request(
+      `http://localhost/downloads/get/${fileId}?licenseKey=valid-git-fallback-key`,
+    );
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Disposition")).toContain("release.zip");
+    expect(res.headers.get("X-SHA256")).toBe("git-sha");
+  });
+
+  test("GET /downloads/get/:id should reject git file from another product", async () => {
+    const futureDate = new Date();
+    futureDate.setFullYear(futureDate.getFullYear() + 1);
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  key: "valid-key-prod-a",
+                  productId: "prod_a",
+                  expirationDate: futureDate,
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "git_dl_cross",
+                  productId: "prod_b",
+                  repoUrl: "https://github.com/acme/repo",
+                  filePath: "dist/secret.zip",
+                  branch: "main",
+                  commitSha: "abc",
+                  localPath: "./git-downloads/git_dl_cross",
+                  filename: "secret.zip",
+                  sha256: "sha-secret",
+                  lastSyncAt: new Date(),
+                  createdAt: new Date(),
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    const req = new Request(
+      "http://localhost/downloads/get/git_dl_cross?licenseKey=valid-key-prod-a",
+    );
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("File not found");
+  });
+
+  test("GET /downloads/get/:id should resolve git filePath relative to localPath", async () => {
+    const futureDate = new Date();
+    futureDate.setFullYear(futureDate.getFullYear() + 1);
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  key: "valid-relpath-key",
+                  productId: "prod_rel",
+                  expirationDate: futureDate,
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "git_rel_1",
+                  productId: "prod_rel",
+                  repoUrl: "https://github.com/acme/repo",
+                  filePath: "main.lua",
+                  branch: "main",
+                  commitSha: "abc",
+                  localPath: "./git-downloads/git_rel_1",
+                  filename: "main.lua",
+                  sha256: "sha-rel",
+                  lastSyncAt: new Date(),
+                  createdAt: new Date(),
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    (Bun as unknown as Record<string, unknown>).file = (path: string) => {
+      if (path !== "git-downloads/git_rel_1/main.lua") {
+        return {
+          exists: () => Promise.resolve(false),
+        };
+      }
+
+      return {
+        exists: () => Promise.resolve(true),
+        stream: () => new ReadableStream(),
+        type: "text/plain",
+        size: 64,
+      };
+    };
+
+    const req = new Request(
+      "http://localhost/downloads/get/git_rel_1?licenseKey=valid-relpath-key",
+    );
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Disposition")).toContain("main.lua");
+    expect(res.headers.get("X-SHA256")).toBe("sha-rel");
   });
 
   test("GET /downloads/get/:id should return 400 when licenseKey is missing", async () => {
@@ -804,6 +1252,12 @@ describe("Downloads User Endpoints", () => {
           where: () => Promise.resolve(files),
           limit: () => ({ offset: () => Promise.resolve([]) }),
         }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => Promise.resolve([]),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
       }));
 
     const req = new Request(
@@ -814,6 +1268,101 @@ describe("Downloads User Endpoints", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown[];
     expect(body).toHaveLength(1);
+  });
+
+  test("POST /downloads/delete should delete git entry when github=true", async () => {
+    mockSelect.mockImplementation(() => ({
+      from: () => ({
+        where: () => ({
+          limit: () =>
+            Promise.resolve([
+              {
+                id: "git_delete_1",
+                productId: "prod_123",
+                repoUrl: "https://github.com/acme/repo",
+                filePath: "dist/app.zip",
+                branch: "main",
+                commitSha: "abc",
+                localPath: "./git-downloads/git_delete_1",
+                filename: "app.zip",
+                sha256: "sha",
+                lastSyncAt: new Date(),
+                createdAt: new Date(),
+              },
+            ]),
+        }),
+        limit: () => ({ offset: () => Promise.resolve([]) }),
+      }),
+    }));
+
+    const req = new Request("http://localhost/downloads/delete", {
+      method: "POST",
+      body: JSON.stringify({ id: "git_delete_1", github: true }),
+    });
+
+    const res = await handleDownloadsRequest(req);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      success: boolean;
+      id: string;
+      github: boolean;
+    };
+    expect(body.success).toBe(true);
+    expect(body.id).toBe("git_delete_1");
+    expect(body.github).toBe(true);
+    expect(mockDelete).toHaveBeenCalledTimes(2);
+  });
+
+  test("POST /downloads/delete should fallback to git when regular is missing", async () => {
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "git_fallback_1",
+                  productId: "prod_123",
+                  repoUrl: "https://github.com/acme/repo",
+                  filePath: "dist/app.zip",
+                  branch: "main",
+                  commitSha: "abc",
+                  localPath: "./git-downloads/git_fallback_1",
+                  filename: "app.zip",
+                  sha256: "sha",
+                  lastSyncAt: new Date(),
+                  createdAt: new Date(),
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    const req = new Request("http://localhost/downloads/delete", {
+      method: "POST",
+      body: JSON.stringify({ id: "git_fallback_1" }),
+    });
+
+    const res = await handleDownloadsRequest(req);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      success: boolean;
+      id: string;
+      github: boolean;
+    };
+    expect(body.success).toBe(true);
+    expect(body.id).toBe("git_fallback_1");
+    expect(body.github).toBe(true);
+    expect(mockDelete).toHaveBeenCalledTimes(2);
   });
 
   test("should return 401 when authentication fails for admin endpoints", async () => {

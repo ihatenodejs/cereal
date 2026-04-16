@@ -11,6 +11,38 @@ interface LicenseRequestBody {
   key?: string;
 }
 
+function validateTierForProduct(
+  product: typeof applications.$inferSelect,
+  productId: string,
+  tier: string | null | undefined,
+): Response | null {
+  if (product.availableTiers && product.availableTiers.length > 0) {
+    if (!tier) {
+      return new Response(
+        `Product '${productId}' requires a tier. Available tiers: ${product.availableTiers.join(", ")}`,
+        { status: 400 },
+      );
+    }
+
+    if (!product.availableTiers.includes(tier)) {
+      return new Response(
+        `Invalid tier '${tier}' for product '${productId}'. Available tiers: ${product.availableTiers.join(", ")}`,
+        { status: 400 },
+      );
+    }
+
+    return null;
+  }
+
+  if (tier) {
+    return new Response(`Product '${productId}' does not support tiers`, {
+      status: 400,
+    });
+  }
+
+  return null;
+}
+
 export async function handleLicensesRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
@@ -45,6 +77,33 @@ export async function handleLicensesRequest(req: Request): Promise<Response> {
           valid: false,
           reason: "License has expired",
           expirationDate: license.expirationDate,
+        });
+      }
+
+      const [product] = await db
+        .select()
+        .from(applications)
+        .where(eq(applications.id, license.productId))
+        .limit(1);
+
+      if (!product) {
+        return Response.json({
+          valid: false,
+          reason: "License product not found",
+        });
+      }
+
+      if (product.availableTiers && product.availableTiers.length > 0) {
+        if (!license.tier || !product.availableTiers.includes(license.tier)) {
+          return Response.json({
+            valid: false,
+            reason: "License tier is invalid for product",
+          });
+        }
+      } else if (license.tier) {
+        return Response.json({
+          valid: false,
+          reason: "License has tier but product does not support tiers",
         });
       }
 
@@ -108,20 +167,13 @@ export async function handleLicensesRequest(req: Request): Promise<Response> {
         });
       }
 
-      if (product.availableTiers && product.availableTiers.length > 0) {
-        if (!tier) {
-          return new Response(
-            `Product '${productId}' requires a tier. Available tiers: ${product.availableTiers.join(", ")}`,
-            { status: 400 },
-          );
-        }
-
-        if (!product.availableTiers.includes(tier)) {
-          return new Response(
-            `Invalid tier '${tier}' for product '${productId}'. Available tiers: ${product.availableTiers.join(", ")}`,
-            { status: 400 },
-          );
-        }
+      const tierValidationError = validateTierForProduct(
+        product,
+        productId,
+        tier,
+      );
+      if (tierValidationError) {
+        return tierValidationError;
       }
 
       const key = crypto.randomUUID();
@@ -169,20 +221,13 @@ export async function handleLicensesRequest(req: Request): Promise<Response> {
 
       const targetTier = tier !== undefined ? tier : currentLicense.tier;
 
-      if (product.availableTiers && product.availableTiers.length > 0) {
-        if (!targetTier) {
-          return new Response(
-            `Product '${targetProductId}' requires a tier. Available tiers: ${product.availableTiers.join(", ")}`,
-            { status: 400 },
-          );
-        }
-
-        if (!product.availableTiers.includes(targetTier)) {
-          return new Response(
-            `Invalid tier '${targetTier}' for product '${targetProductId}'. Available tiers: ${product.availableTiers.join(", ")}`,
-            { status: 400 },
-          );
-        }
+      const tierValidationError = validateTierForProduct(
+        product,
+        targetProductId,
+        targetTier,
+      );
+      if (tierValidationError) {
+        return tierValidationError;
       }
 
       const updateData: {

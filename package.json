@@ -1,6 +1,6 @@
 {
   "name": "cereal",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "module": "index.ts",
   "type": "module",
   "private": true,
@@ -34,15 +34,16 @@
     "eslint-plugin-import": "^2.32.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
-    "prettier": "^3.8.2",
-    "typescript-eslint": "^8.58.1"
+    "prettier": "^3.8.3",
+    "typescript-eslint": "^8.58.2"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
+    "figlet": "^1.11.0",
     "postgres": "^3.4.9",
-    "swagger-ui-dist": "^5.32.2"
+    "swagger-ui-dist": "^5.32.4"
   }
 }

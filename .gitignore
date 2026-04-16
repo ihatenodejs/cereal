@@ -37,11 +37,11 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # db data
 db-data
 
-# drizzle
-drizzle/
-
 # docker
 docker-compose.yml
 !examples/docker-compose.yml
 Dockerfile
 !examples/Dockerfile
+
+# uploads
+uploads/
