@@ -19,8 +19,8 @@
 - `licenses` - License keys linked to products with optional expiration
   - Includes optional `tier` field (required if product has availableTiers)
 - `api_keys` - API keys for authenticating requests
-- `downloads` - Uploaded release files (versioned binaries/archives per product)
-- `git_downloads` - Git-backed downloadable files tracked by repo/branch/path
+- `downloads` - Uploaded release files (versioned binaries/archives per product, unique on `productId` + `version`)
+- `git_downloads` - Git-backed downloadable files tracked by repo/branch/path (also supports `sourceType` for release assets, with `assetName`, `releaseTag`, `releaseId` fields)
 - `git_sync_history` - Sync audit history for Git download refresh operations
 
 ## Available API Routes
@@ -54,12 +54,12 @@
 - `GET /downloads/files` - List downloadable files for a license (PUBLIC - requires `licenseKey` query param)
 - `GET /downloads/get/:id` - Download a specific file by ID (PUBLIC - requires `licenseKey` query param; optional `plaintext=true`)
 - `GET /downloads/list` - List all download entries with pagination (authenticated)
-- `POST /downloads/upload` - Upload a release file (authenticated, `multipart/form-data` with `productId`, `version`, `file`)
-- `POST /downloads/delete` - Delete a download entry (authenticated, requires `id`)
+- `POST /downloads/upload` - Upload a release file (authenticated, `multipart/form-data` with `productId`, `version`, `file`; returns `{ success, id, sha256, github: false }`)
+- `POST /downloads/delete` - Delete a download entry (authenticated, requires `id`, optional `github` boolean to directly target git_downloads)
 
 ### Git Downloads (Authenticated)
 
-- `POST /downloads/git/add` - Add a Git-based downloadable file (requires `productId`, `repoUrl`, `filePath`, optional `branch`)
+- `POST /downloads/git/add` - Add a Git-based downloadable file (requires `productId`, `repoUrl`, `filePath`, optional `branch`, `source` [default `"repo_file"`, accepts `"repo_file"` or `"release_asset"`], `assetName` [required when `source=release_asset`])
 - `POST /downloads/git/refresh` - Sync a tracked Git file to latest commit (requires `id`)
 - `GET /downloads/git/history` - Get sync history for a Git download (requires `id` query param)
 
@@ -71,12 +71,13 @@
 src/
 ├── config/         # Server configuration (port, environment)
 ├── db/             # Database connection and Drizzle schema definitions
-├── db-data/        # Persistent database data (mounted to Docker volume)
 ├── middleware/     # Authentication and other middleware
 ├── routes/         # API route handlers (products, licenses, downloads, docs)
+├── tests/          # Test files (unit/integration tests per route)
 ├── utils/          # Utility modules (e.g., git clone/sync helpers)
 └── templates/      # HTML/JS templates for Swagger UI
 
+db-data/            # Persistent database data (mounted to Docker volume, at project root)
 index.ts            # Main server entry point with route registration
 swagger.ts          # OpenAPI specification
 scripts/            # Utility scripts (e.g., API key creation)
@@ -89,10 +90,15 @@ Follow this pattern when adding new endpoints:
 ### 1. Create Route Handler (`src/routes/<resource>.ts`)
 
 ```typescript
+import { eq } from "drizzle-orm";
+
 import { db } from "../db/index.ts";
 import { myTable } from "../db/schema.ts";
-import { eq } from "drizzle-orm";
 import { authenticate } from "../middleware/auth.ts";
+
+interface MyResourceRequestBody {
+  field: string;
+}
 
 export async function handleMyResourceRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -102,13 +108,21 @@ export async function handleMyResourceRequest(req: Request): Promise<Response> {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  // Check HTTP method
+  // Handle GET routes
+  if (req.method === "GET") {
+    if (url.pathname === "/myresource/list") {
+      const records = await db.select().from(myTable);
+      return Response.json({ records });
+    }
+  }
+
+  // Handle POST routes
   if (req.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
   try {
-    const body: any = await req.json();
+    const body = (await req.json()) as MyResourceRequestBody;
 
     // Route to specific sub-paths
     if (url.pathname === "/myresource/add") {
@@ -169,10 +183,11 @@ Add endpoint documentation in `swagger.ts` following existing patterns.
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and configure (if `.env.example` doesn't exist, create `.env` manually):
 
 ```bash
-# Database configuration (used to build POSTGRES_URL)
+# Database configuration (used to build POSTGRES_URL; these are for Docker/PostgreSQL setup,
+# not directly read by the application)
 POSTGRES_USER=postgres      # Database username
 POSTGRES_PASSWORD=postgres  # Database password
 POSTGRES_DB=cereal         # Database name
@@ -181,6 +196,10 @@ POSTGRES_DB=cereal         # Database name
 PORT=3000                  # Server port (default: 3000)
 NODE_ENV=production        # Environment: development | production
 UPLOADS_DIR=./uploads      # Optional downloads storage directory
+
+# Git downloads configuration
+GIT_DOWNLOADS_DIR=./git-downloads   # Directory for cloned repos (default: ./git-downloads)
+GITHUB_TOKEN=                      # Optional GitHub token for private repo access
 
 # Full connection string (automatically constructed if not set)
 POSTGRES_URL=postgres://user:pass@localhost:5432/cereal
@@ -269,9 +288,10 @@ bun test --watch       # Watch mode
 
 This project uses **Husky** and **lint-staged** to automatically enforce code quality standards before every commit.
 
-- **Pre-commit hook**: Runs `bunx lint-staged` on staged files
+- **Pre-commit hook**: Runs `bunx lint-staged` on staged files, then `bun test`
   - TypeScript/JavaScript files (`*.{ts,tsx,js,jsx}`): `eslint --fix` → `prettier --write`
   - All other files (`*`): `prettier --write --ignore-unknown`
+  - After lint-staged, all tests run via `bun test` (commit will fail if tests fail)
 
 **Important for commits:**
 
@@ -292,9 +312,10 @@ This project uses **Husky** and **lint-staged** to automatically enforce code qu
   2. External packages
   3. Internal absolute imports
   4. Relative imports (parent/sibling)
-  5. Type imports
+  5. Index imports
+  6. Type imports
 - **Alphabetize** within each group (enforced by ESLint)
-- **Include `.ts` extension** for local imports
+- **Include `.ts` extension** for local imports (convention, not ESLint-enforced)
 - **No duplicate imports** (enforced by ESLint)
 
 Example:
