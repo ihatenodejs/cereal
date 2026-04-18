@@ -403,6 +403,56 @@ describe("Downloads Admin Endpoints", () => {
     expect(git?.["commitSha"]).toBe("abc123");
     expect(git?.["repoUrl"]).toBe("https://github.com/acme/repo");
   });
+
+  test("GET /downloads/list should include release metadata for release assets", async () => {
+    const now = new Date("2024-03-01T00:00:00Z");
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          limit: () => ({
+            offset: () => Promise.resolve([]),
+          }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          limit: () => ({
+            offset: () =>
+              Promise.resolve([
+                {
+                  id: "dl_git_release",
+                  productId: "prod_1",
+                  repoUrl: "https://github.com/acme/repo",
+                  filePath: "app.zip",
+                  sourceType: "release_asset",
+                  assetName: "app.zip",
+                  releaseTag: "v1.2.3",
+                  releaseId: "321",
+                  branch: "main",
+                  commitSha: "v1.2.3",
+                  localPath: "./git-downloads/dl_git_release",
+                  filename: "app.zip",
+                  sha256: "sha-git",
+                  lastSyncAt: now,
+                  createdAt: now,
+                },
+              ]),
+          }),
+        }),
+      }));
+
+    const req = new Request("http://localhost/downloads/list?limit=10&page=1");
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>[];
+    expect(body).toHaveLength(1);
+    expect(body[0]?.["sourceType"]).toBe("release_asset");
+    expect(body[0]?.["assetName"]).toBe("app.zip");
+    expect(body[0]?.["releaseTag"]).toBe("v1.2.3");
+    expect(body[0]?.["releaseId"]).toBe("321");
+  });
 });
 
 describe("Downloads User Endpoints", () => {
@@ -546,6 +596,72 @@ describe("Downloads User Endpoints", () => {
     expect(body[0]?.["displayVersion"]).toBe("deadbeef");
     expect(body[0]?.["commitSha"]).toBe("deadbeef");
     expect((body[0] as Record<string, unknown>)["url"]).toBeDefined();
+  });
+
+  test("GET /downloads/files should include release metadata for release assets", async () => {
+    const futureDate = new Date();
+    futureDate.setFullYear(futureDate.getFullYear() + 1);
+
+    mockSelect
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  key: "valid-release-files",
+                  productId: "prod_abc",
+                  expirationDate: futureDate,
+                },
+              ]),
+          }),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () => Promise.resolve([]),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          where: () =>
+            Promise.resolve([
+              {
+                id: "git_release_1",
+                productId: "prod_abc",
+                repoUrl: "https://github.com/acme/repo",
+                filePath: "app.zip",
+                sourceType: "release_asset",
+                assetName: "app.zip",
+                releaseTag: "v2.0.0",
+                releaseId: "456",
+                branch: "main",
+                commitSha: "v2.0.0",
+                localPath: "./git-downloads/git_release_1",
+                filename: "app.zip",
+                sha256: "sha-release",
+                lastSyncAt: new Date("2024-01-02T00:00:00Z"),
+                createdAt: new Date("2024-01-01T00:00:00Z"),
+              },
+            ]),
+          limit: () => ({ offset: () => Promise.resolve([]) }),
+        }),
+      }));
+
+    const req = new Request(
+      "http://localhost/downloads/files?licenseKey=valid-release-files",
+    );
+    const res = await handleDownloadsRequest(req);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>[];
+    expect(body).toHaveLength(1);
+    expect(body[0]?.["sourceType"]).toBe("release_asset");
+    expect(body[0]?.["assetName"]).toBe("app.zip");
+    expect(body[0]?.["releaseTag"]).toBe("v2.0.0");
+    expect(body[0]?.["releaseId"]).toBe("456");
   });
 
   test("GET /downloads/files should return 403 for invalid license", async () => {

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   type GitCloneResult,
   type GitError,
+  type GitReleaseDownloadResult,
+  type GitReleaseSyncResult,
   type GitSyncResult,
 } from "../utils/git.ts";
 import {
@@ -32,11 +34,33 @@ const mockSyncRepo = mock(
     }),
 );
 const mockDeleteRepo = mock(() => Promise.resolve());
+const mockDownloadLatestReleaseAsset = mock(
+  (): Promise<GitReleaseDownloadResult | GitError> =>
+    Promise.resolve({
+      releaseId: "123",
+      releaseTag: "v1.0.0",
+      localPath: "./git-downloads/git-rel-1",
+      filePath: "app.zip",
+      sha256: "sha-rel-123",
+    }),
+);
+const mockSyncLatestReleaseAsset = mock(
+  (): Promise<GitReleaseSyncResult | GitError> =>
+    Promise.resolve({
+      releaseId: "124",
+      releaseTag: "v1.0.1",
+      filePath: "app.zip",
+      sha256: "sha-rel-456",
+      changed: true,
+    }),
+);
 
 mock.module("../utils/git.ts", () => ({
   cloneRepo: mockCloneRepo,
   syncRepo: mockSyncRepo,
   deleteRepo: mockDeleteRepo,
+  downloadLatestReleaseAsset: mockDownloadLatestReleaseAsset,
+  syncLatestReleaseAsset: mockSyncLatestReleaseAsset,
 }));
 
 setupMocks();
@@ -50,6 +74,8 @@ describe("Git Downloads Endpoints", () => {
     mockCloneRepo.mockClear();
     mockSyncRepo.mockClear();
     mockDeleteRepo.mockClear();
+    mockDownloadLatestReleaseAsset.mockClear();
+    mockSyncLatestReleaseAsset.mockClear();
   });
 
   test("POST /downloads/git/add should create a git download", async () => {
@@ -153,6 +179,68 @@ describe("Git Downloads Endpoints", () => {
     expect(await res.text()).toBe("Missing productId");
   });
 
+  test("POST /downloads/git/add should create a release asset download", async () => {
+    mockSelect.mockImplementation(() => ({
+      from: () => ({
+        where: () => ({
+          limit: () => Promise.resolve([{ id: "prod_123", name: "App" }]),
+        }),
+        limit: () => ({ offset: () => Promise.resolve([]) }),
+      }),
+    }));
+
+    const req = new Request("http://localhost/downloads/git/add", {
+      method: "POST",
+      body: JSON.stringify({
+        productId: "prod_123",
+        repoUrl: "https://github.com/acme/repo",
+        source: "release_asset",
+        assetName: "app.zip",
+      }),
+    });
+
+    const res = await handleGitDownloadsRequest(req);
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as {
+      success: boolean;
+      id: string;
+      commitSha: string;
+      sha256: string;
+      sourceType: string;
+      releaseTag: string;
+      releaseId: string;
+    };
+
+    expect(body.success).toBe(true);
+    expect(body.commitSha).toBe("v1.0.0");
+    expect(body.sha256).toBe("sha-rel-123");
+    expect(body.sourceType).toBe("release_asset");
+    expect(body.releaseTag).toBe("v1.0.0");
+    expect(body.releaseId).toBe("123");
+    expect(mockDownloadLatestReleaseAsset).toHaveBeenCalledWith(
+      "https://github.com/acme/repo",
+      expect.any(String),
+      "app.zip",
+    );
+    expect(mockCloneRepo).not.toHaveBeenCalled();
+  });
+
+  test("POST /downloads/git/add should return 400 when release asset name is missing", async () => {
+    const req = new Request("http://localhost/downloads/git/add", {
+      method: "POST",
+      body: JSON.stringify({
+        productId: "prod_123",
+        repoUrl: "https://github.com/acme/repo",
+        source: "release_asset",
+      }),
+    });
+
+    const res = await handleGitDownloadsRequest(req);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Missing assetName");
+  });
+
   test("POST /downloads/git/refresh should refresh and write history", async () => {
     mockSelect.mockImplementation(() => ({
       from: () => ({
@@ -242,6 +330,71 @@ describe("Git Downloads Endpoints", () => {
     expect(await res.text()).toContain("File not found in repository");
     expect(mockInsert).toHaveBeenCalledTimes(1);
     expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  test("POST /downloads/git/refresh should refresh release asset and write history", async () => {
+    mockSelect.mockImplementation(() => ({
+      from: () => ({
+        where: () => ({
+          limit: () =>
+            Promise.resolve([
+              {
+                id: "git_rel_1",
+                productId: "prod_123",
+                repoUrl: "https://github.com/acme/repo",
+                filePath: "app.zip",
+                sourceType: "release_asset",
+                assetName: "app.zip",
+                releaseTag: "v1.0.0",
+                releaseId: "123",
+                branch: "main",
+                commitSha: "v1.0.0",
+                localPath: "./git-downloads/git_rel_1",
+                filename: "app.zip",
+                sha256: "old-sha",
+                lastSyncAt: new Date(),
+                createdAt: new Date(),
+              },
+            ]),
+        }),
+        limit: () => ({ offset: () => Promise.resolve([]) }),
+      }),
+    }));
+
+    const req = new Request("http://localhost/downloads/git/refresh", {
+      method: "POST",
+      body: JSON.stringify({ id: "git_rel_1" }),
+    });
+
+    const res = await handleGitDownloadsRequest(req);
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as {
+      success: boolean;
+      id: string;
+      commitSha: string;
+      sha256: string;
+      changed: boolean;
+      sourceType: string;
+      releaseTag: string;
+      releaseId: string;
+    };
+
+    expect(body.success).toBe(true);
+    expect(body.id).toBe("git_rel_1");
+    expect(body.commitSha).toBe("v1.0.1");
+    expect(body.sha256).toBe("sha-rel-456");
+    expect(body.changed).toBe(true);
+    expect(body.sourceType).toBe("release_asset");
+    expect(body.releaseTag).toBe("v1.0.1");
+    expect(body.releaseId).toBe("124");
+    expect(mockSyncLatestReleaseAsset).toHaveBeenCalledWith(
+      "https://github.com/acme/repo",
+      "./git-downloads/git_rel_1",
+      "app.zip",
+      "123",
+    );
+    expect(mockSyncRepo).not.toHaveBeenCalled();
   });
 
   test("POST /downloads/git/refresh should return 404 for missing download", async () => {

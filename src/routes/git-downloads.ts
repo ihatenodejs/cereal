@@ -6,9 +6,21 @@ import { authenticate } from "../middleware/auth.ts";
 import {
   cloneRepo,
   deleteRepo,
+  downloadLatestReleaseAsset,
   syncRepo,
+  syncLatestReleaseAsset,
   type GitError,
 } from "../utils/git.ts";
+
+const GIT_SOURCE_TYPES = ["repo_file", "release_asset"] as const;
+type GitSourceType = (typeof GIT_SOURCE_TYPES)[number];
+
+function isGitSourceType(value: unknown): value is GitSourceType {
+  return (
+    typeof value === "string" &&
+    (GIT_SOURCE_TYPES as readonly string[]).includes(value)
+  );
+}
 
 function isGitError(result: unknown): result is GitError {
   return typeof result === "object" && result !== null && "code" in result;
@@ -31,9 +43,18 @@ export async function handleGitDownloadsRequest(
         repoUrl?: string;
         filePath?: string;
         branch?: string;
+        source?: GitSourceType;
+        assetName?: string;
       };
 
-      const { productId, repoUrl, filePath, branch = "main" } = body;
+      const {
+        productId,
+        repoUrl,
+        filePath,
+        branch = "main",
+        source = "repo_file",
+        assetName,
+      } = body;
 
       if (!productId || typeof productId !== "string") {
         return new Response("Missing productId", { status: 400 });
@@ -41,8 +62,30 @@ export async function handleGitDownloadsRequest(
       if (!repoUrl || typeof repoUrl !== "string") {
         return new Response("Missing repoUrl", { status: 400 });
       }
-      if (!filePath || typeof filePath !== "string") {
+      if (!isGitSourceType(source)) {
+        return new Response(
+          "Invalid source. Must be 'repo_file' or 'release_asset'",
+          {
+            status: 400,
+          },
+        );
+      }
+
+      const repoFilePath = source === "repo_file" ? filePath : undefined;
+      if (
+        source === "repo_file" &&
+        (!repoFilePath || typeof repoFilePath !== "string")
+      ) {
         return new Response("Missing filePath", { status: 400 });
+      }
+
+      const releaseAssetName =
+        source === "release_asset" ? assetName : undefined;
+      if (
+        source === "release_asset" &&
+        (!releaseAssetName || typeof releaseAssetName !== "string")
+      ) {
+        return new Response("Missing assetName", { status: 400 });
       }
 
       const [product] = await db
@@ -58,31 +101,98 @@ export async function handleGitDownloadsRequest(
       }
 
       const id = crypto.randomUUID();
-      const cloneResult = await cloneRepo(repoUrl, branch, id, filePath);
 
-      if (isGitError(cloneResult)) {
-        const statusCode =
-          cloneResult.code === "AUTH_FAILED"
-            ? 403
-            : cloneResult.code === "FILE_NOT_FOUND"
-              ? 404
-              : 400;
-        return new Response(cloneResult.message, { status: statusCode });
+      let trackedFilePath = "";
+      let commitSha = "";
+      let localPath = "";
+      let filename = "";
+      let sha256 = "";
+      let releaseTag: string | null = null;
+      let releaseId: string | null = null;
+
+      if (source === "repo_file") {
+        if (!repoFilePath) {
+          return new Response("Missing filePath", { status: 400 });
+        }
+
+        const cloneResult = await cloneRepo(repoUrl, branch, id, repoFilePath);
+
+        if (isGitError(cloneResult)) {
+          const statusCode =
+            cloneResult.code === "AUTH_FAILED"
+              ? 403
+              : cloneResult.code === "FILE_NOT_FOUND"
+                ? 404
+                : 400;
+          return new Response(cloneResult.message, { status: statusCode });
+        }
+
+        const {
+          commitSha: clonedCommitSha,
+          localPath: clonedLocalPath,
+          sha256: clonedSha256,
+        } = cloneResult;
+
+        trackedFilePath = repoFilePath;
+        commitSha = clonedCommitSha;
+        localPath = clonedLocalPath;
+        filename = repoFilePath.split("/").pop() ?? repoFilePath;
+        sha256 = clonedSha256;
+      } else {
+        if (!releaseAssetName) {
+          return new Response("Missing assetName", { status: 400 });
+        }
+
+        const releaseResult = await downloadLatestReleaseAsset(
+          repoUrl,
+          id,
+          releaseAssetName,
+        );
+
+        if (isGitError(releaseResult)) {
+          const statusCode =
+            releaseResult.code === "AUTH_FAILED"
+              ? 403
+              : releaseResult.code === "RELEASE_NOT_FOUND" ||
+                  releaseResult.code === "ASSET_NOT_FOUND"
+                ? 404
+                : 400;
+          return new Response(releaseResult.message, { status: statusCode });
+        }
+
+        const {
+          filePath: releaseFilePath,
+          releaseTag: latestReleaseTag,
+          localPath: releaseLocalPath,
+          sha256: releaseSha256,
+          releaseId: latestReleaseId,
+        } = releaseResult;
+
+        trackedFilePath = releaseFilePath;
+        commitSha = latestReleaseTag;
+        localPath = releaseLocalPath;
+        filename = releaseAssetName;
+        sha256 = releaseSha256;
+        releaseTag = latestReleaseTag;
+        releaseId = latestReleaseId;
       }
 
-      const filename = filePath.split("/").pop() ?? filePath;
       const now = new Date();
 
       await db.insert(gitDownloads).values({
         id,
         productId,
         repoUrl,
-        filePath,
+        filePath: trackedFilePath,
+        sourceType: source,
+        assetName: source === "release_asset" ? releaseAssetName : null,
+        releaseTag,
+        releaseId,
         branch,
-        commitSha: cloneResult.commitSha,
-        localPath: cloneResult.localPath,
+        commitSha,
+        localPath,
         filename,
-        sha256: cloneResult.sha256,
+        sha256,
         lastSyncAt: now,
         createdAt: now,
       });
@@ -93,15 +203,18 @@ export async function handleGitDownloadsRequest(
         gitDownloadId: id,
         status: "success",
         previousCommitSha: null,
-        newCommitSha: cloneResult.commitSha,
+        newCommitSha: commitSha,
         syncedAt: now,
       });
 
       return Response.json({
         success: true,
         id,
-        commitSha: cloneResult.commitSha,
-        sha256: cloneResult.sha256,
+        commitSha,
+        sha256,
+        sourceType: source,
+        releaseTag,
+        releaseId,
       });
     } catch (error) {
       console.error("Git downloads add error:", error);
@@ -130,6 +243,79 @@ export async function handleGitDownloadsRequest(
       }
 
       const previousCommitSha = gitDownload.commitSha;
+
+      const sourceType =
+        gitDownload.sourceType === "release_asset"
+          ? "release_asset"
+          : "repo_file";
+
+      if (sourceType === "release_asset") {
+        const syncResult = await syncLatestReleaseAsset(
+          gitDownload.repoUrl,
+          gitDownload.localPath,
+          gitDownload.assetName ?? gitDownload.filename,
+          gitDownload.releaseId,
+        );
+
+        if (isGitError(syncResult)) {
+          const historyId = crypto.randomUUID();
+          await db.insert(gitSyncHistory).values({
+            id: historyId,
+            gitDownloadId: id,
+            status: "failed",
+            errorMessage: syncResult.message,
+            previousCommitSha,
+            newCommitSha: null,
+            syncedAt: new Date(),
+          });
+
+          const statusCode =
+            syncResult.code === "AUTH_FAILED"
+              ? 403
+              : syncResult.code === "FILE_NOT_FOUND" ||
+                  syncResult.code === "RELEASE_NOT_FOUND" ||
+                  syncResult.code === "ASSET_NOT_FOUND"
+                ? 404
+                : 400;
+          return new Response(syncResult.message, { status: statusCode });
+        }
+
+        const newCommitSha = syncResult.releaseTag;
+        const now = new Date();
+        await db
+          .update(gitDownloads)
+          .set({
+            commitSha: newCommitSha,
+            releaseTag: syncResult.releaseTag,
+            releaseId: syncResult.releaseId,
+            filePath: syncResult.filePath,
+            sha256: syncResult.sha256,
+            lastSyncAt: now,
+          })
+          .where(eq(gitDownloads.id, id));
+
+        const historyId = crypto.randomUUID();
+        await db.insert(gitSyncHistory).values({
+          id: historyId,
+          gitDownloadId: id,
+          status: "success",
+          previousCommitSha,
+          newCommitSha,
+          syncedAt: now,
+        });
+
+        return Response.json({
+          success: true,
+          id,
+          commitSha: newCommitSha,
+          sha256: syncResult.sha256,
+          changed: syncResult.changed,
+          sourceType,
+          releaseTag: syncResult.releaseTag,
+          releaseId: syncResult.releaseId,
+        });
+      }
+
       const syncResult = await syncRepo(
         gitDownload.localPath,
         gitDownload.branch,
@@ -151,17 +337,24 @@ export async function handleGitDownloadsRequest(
         const statusCode =
           syncResult.code === "AUTH_FAILED"
             ? 403
-            : syncResult.code === "FILE_NOT_FOUND"
+            : syncResult.code === "FILE_NOT_FOUND" ||
+                syncResult.code === "RELEASE_NOT_FOUND" ||
+                syncResult.code === "ASSET_NOT_FOUND"
               ? 404
               : 400;
         return new Response(syncResult.message, { status: statusCode });
       }
 
+      const newCommitSha = syncResult.commitSha;
+
       const now = new Date();
       await db
         .update(gitDownloads)
         .set({
-          commitSha: syncResult.commitSha,
+          commitSha: newCommitSha,
+          releaseTag: null,
+          releaseId: null,
+          filePath: gitDownload.filePath,
           sha256: syncResult.sha256,
           lastSyncAt: now,
         })
@@ -173,16 +366,19 @@ export async function handleGitDownloadsRequest(
         gitDownloadId: id,
         status: "success",
         previousCommitSha,
-        newCommitSha: syncResult.commitSha,
+        newCommitSha,
         syncedAt: now,
       });
 
       return Response.json({
         success: true,
         id,
-        commitSha: syncResult.commitSha,
+        commitSha: newCommitSha,
         sha256: syncResult.sha256,
         changed: syncResult.changed,
+        sourceType,
+        releaseTag: null,
+        releaseId: null,
       });
     } catch (error) {
       console.error("Git downloads refresh error:", error);

@@ -1523,6 +1523,33 @@ export const swaggerSpec = {
                         description: "Full Git commit SHA (Git downloads only)",
                         example: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8g9h0",
                       },
+                      sourceType: {
+                        type: "string",
+                        description:
+                          "Git source mode for Git downloads: repository file or latest release asset",
+                        enum: ["repo_file", "release_asset"],
+                        example: "repo_file",
+                      },
+                      assetName: {
+                        type: "string",
+                        nullable: true,
+                        description: "Tracked release asset filename",
+                        example: "app-1.2.0.zip",
+                      },
+                      releaseTag: {
+                        type: "string",
+                        nullable: true,
+                        description:
+                          "Latest release tag when sourceType=release_asset",
+                        example: "v1.2.0",
+                      },
+                      releaseId: {
+                        type: "string",
+                        nullable: true,
+                        description:
+                          "Latest release identifier when sourceType=release_asset",
+                        example: "123456789",
+                      },
                       filename: {
                         type: "string",
                         example: "myapp-1.2.0-linux-amd64.zip",
@@ -1621,6 +1648,33 @@ export const swaggerSpec = {
                         type: "string",
                         description: "Full Git commit SHA (Git downloads only)",
                         example: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8g9h0",
+                      },
+                      sourceType: {
+                        type: "string",
+                        description:
+                          "Git source mode for Git downloads: repository file or latest release asset",
+                        enum: ["repo_file", "release_asset"],
+                        example: "repo_file",
+                      },
+                      assetName: {
+                        type: "string",
+                        nullable: true,
+                        description: "Tracked release asset filename",
+                        example: "app-1.2.0.zip",
+                      },
+                      releaseTag: {
+                        type: "string",
+                        nullable: true,
+                        description:
+                          "Latest release tag when sourceType=release_asset",
+                        example: "v1.2.0",
+                      },
+                      releaseId: {
+                        type: "string",
+                        nullable: true,
+                        description:
+                          "Latest release identifier when sourceType=release_asset",
+                        example: "123456789",
                       },
                       filename: {
                         type: "string",
@@ -1821,7 +1875,7 @@ export const swaggerSpec = {
       post: {
         summary: "Add a Git download from GitHub",
         description:
-          "Clone a file from a GitHub repository and track it for updates. The repository is cloned shallowly and the specified file is extracted. Requires GITHUB_TOKEN environment variable for private repositories.",
+          "Create a Git-based download and track updates. Supports repository file mode and latest release asset mode. Requires GITHUB_TOKEN environment variable for private repositories.",
         operationId: "addGitDownload",
         tags: ["Git Downloads"],
         security: [{ bearerAuth: [] }],
@@ -1831,7 +1885,6 @@ export const swaggerSpec = {
             "application/json": {
               schema: {
                 type: "object",
-                required: ["productId", "repoUrl", "filePath"],
                 properties: {
                   productId: {
                     type: "string",
@@ -1845,11 +1898,25 @@ export const swaggerSpec = {
                       "GitHub repository URL (e.g., https://github.com/owner/repo)",
                     example: "https://github.com/owner/repo",
                   },
+                  source: {
+                    type: "string",
+                    enum: ["repo_file", "release_asset"],
+                    description:
+                      "Download source mode: repo_file tracks a repository path; release_asset tracks the latest release asset by filename",
+                    default: "repo_file",
+                    example: "repo_file",
+                  },
                   filePath: {
                     type: "string",
                     description:
-                      "Path to the file within the repository (relative to repo root)",
+                      "Path to the file within the repository (required when source=repo_file)",
                     example: "dist/app-1.0.0.zip",
+                  },
+                  assetName: {
+                    type: "string",
+                    description:
+                      "Release asset filename to fetch from latest release (required when source=release_asset)",
+                    example: "app-1.0.0.zip",
                   },
                   branch: {
                     type: "string",
@@ -1862,6 +1929,7 @@ export const swaggerSpec = {
               example: {
                 productId: "myapp",
                 repoUrl: "https://github.com/owner/repo",
+                source: "repo_file",
                 filePath: "dist/app-1.0.0.zip",
                 branch: "main",
               },
@@ -1894,8 +1962,31 @@ export const swaggerSpec = {
                       example:
                         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                     },
+                    sourceType: {
+                      type: "string",
+                      enum: ["repo_file", "release_asset"],
+                      example: "repo_file",
+                    },
+                    releaseTag: {
+                      type: "string",
+                      nullable: true,
+                      description: "Latest release tag for release_asset mode",
+                      example: "v1.2.3",
+                    },
+                    releaseId: {
+                      type: "string",
+                      nullable: true,
+                      description: "Latest release id for release_asset mode",
+                      example: "123456789",
+                    },
                   },
-                  required: ["success", "id", "commitSha", "sha256"],
+                  required: [
+                    "success",
+                    "id",
+                    "commitSha",
+                    "sha256",
+                    "sourceType",
+                  ],
                 },
               },
             },
@@ -1910,6 +2001,7 @@ export const swaggerSpec = {
                     "Missing productId",
                     "Missing repoUrl",
                     "Missing filePath",
+                    "Missing assetName",
                     "Clone failed: ...",
                   ],
                 },
@@ -1937,7 +2029,7 @@ export const swaggerSpec = {
             },
           },
           "404": {
-            description: "Product or file not found",
+            description: "Product, release, or file not found",
             content: {
               "text/plain": {
                 schema: {
@@ -1945,6 +2037,8 @@ export const swaggerSpec = {
                   examples: [
                     "Product 'myapp' not found",
                     "File not found in repository: dist/app.zip",
+                    "Latest release not found for repository",
+                    "Release asset not found: app.zip",
                   ],
                 },
               },
@@ -2380,6 +2474,30 @@ export const swaggerSpec = {
             description: "Path to file within repository",
             example: "dist/app-1.0.0.zip",
           },
+          sourceType: {
+            type: "string",
+            description: "Git download source mode",
+            enum: ["repo_file", "release_asset"],
+            example: "repo_file",
+          },
+          assetName: {
+            type: "string",
+            nullable: true,
+            description: "Tracked release asset filename",
+            example: "app-1.0.0.zip",
+          },
+          releaseTag: {
+            type: "string",
+            nullable: true,
+            description: "Latest release tag when sourceType=release_asset",
+            example: "v1.0.0",
+          },
+          releaseId: {
+            type: "string",
+            nullable: true,
+            description: "Latest release id when sourceType=release_asset",
+            example: "123456789",
+          },
           branch: {
             type: "string",
             description: "Branch name",
@@ -2419,6 +2537,7 @@ export const swaggerSpec = {
           "productId",
           "repoUrl",
           "filePath",
+          "sourceType",
           "branch",
           "commitSha",
           "filename",

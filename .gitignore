@@ -45,3 +45,6 @@ Dockerfile
 
 # uploads
 uploads/
+
+# git downloads
+git-downloads/
